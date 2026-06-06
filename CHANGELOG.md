@@ -2,6 +2,14 @@
 
 All notable changes to NanoClaw will be documented in this file.
 
+## [fork-sync 2.0.76] - 2026-06-06
+
+Synced the vosburg-auto fork to upstream `qwibitai/nanoclaw` **v2.0.76** (from v2.0.71). 16 upstream commits merged; the only conflict was `package.json` (version), auto-resolved. All fork customizations carried forward unchanged: the Telegram channel (`telegram.ts`, `telegram-pairing.ts`, markdown sanitizer), the `context-awareness` / `gemini-companion` / `opus-escalation` container skills, OneCLI approval handling, webhook-server changes, and the Dockerfile apt-package bake.
+
+- Picks up upstream's `/upload-trace` command (uploads a session trace to Hugging Face) plus minor `init-onecli` skill, formatter, and command-gate fixes.
+- No container image rebuild required — the agent-runner source (where the new `upload-trace.ts` / `poll-loop.ts` changes live) is mounted read-only from the working tree, and neither the Dockerfile nor agent-runner deps changed.
+- Verified: `pnpm typecheck` clean, `pnpm build` clean, 386/386 tests passing; host service restarted on the new build.
+
 ## [2.0.64] - 2026-05-18
 
 - **`ncl destinations add` and `remove` through the approval flow now reach the receiver immediately.** Approved destinations weren't being projected into the receiving agent's local session state, so a freshly-added destination silently failed at `send_message` with `unknown destination`, and a removed destination stayed resolvable until the next container restart. Both now take effect the moment the approval executes. Direct (non-approval) calls were unaffected.
