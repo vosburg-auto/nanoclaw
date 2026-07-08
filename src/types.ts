@@ -25,6 +25,7 @@ export interface ContainerConfigRow {
   packages_npm: string; // JSON: string[]
   additional_mounts: string; // JSON: AdditionalMountConfig[]
   cli_scope: string; // 'disabled' | 'group' | 'global'
+  auto_compact_window: number | null; // Claude Code auto-compact threshold (tokens); NULL = provider default
   updated_at: string;
 }
 
