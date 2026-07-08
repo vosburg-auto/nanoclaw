@@ -446,11 +446,24 @@ function transcriptStartMs(transcriptPath: string): number | null {
  * Claude Code auto-compacts context at this window (tokens). Kept here so
  * the generic bootstrap doesn't need to know about Claude-specific env vars.
  *
- * Operator override: set CLAUDE_CODE_AUTO_COMPACT_WINDOW in the host env to
- * raise or lower the threshold without editing source — useful when running
- * with a 1M-context model variant or when emergency-tuning a deployment.
+ * Precedence: per-group config (`autoCompactWindow` in container.json, from
+ * the `container_configs.auto_compact_window` column) > the
+ * CLAUDE_CODE_AUTO_COMPACT_WINDOW env override > this default. The env hatch
+ * remains for emergency-tuning a deployment without a config write.
  */
 const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '165000';
+
+/**
+ * Resolve the effective auto-compact window for a session's SDK env.
+ * Exported for tests; `envDefault` is injectable so the precedence logic is
+ * testable without mutating or reloading module-level env state.
+ */
+export function resolveAutoCompactWindow(
+  configured?: number,
+  envDefault: string = CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+): string {
+  return configured != null ? String(configured) : envDefault;
+}
 
 /**
  * Stale-session detection. Matches Claude Code's error text when a
@@ -478,8 +491,8 @@ export class ClaudeProvider implements AgentProvider {
     this.effort = options.effort;
     this.env = {
       ...(options.env ?? {}),
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW,
       CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1',
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: resolveAutoCompactWindow(options.autoCompactWindow),
     };
   }
 

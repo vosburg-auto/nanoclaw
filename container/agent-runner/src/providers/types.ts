@@ -76,6 +76,12 @@ export interface ProviderOptions {
    * through to the underlying SDK. If omitted, the SDK default is used.
    */
   effort?: string;
+  /**
+   * Context auto-compact threshold in tokens. Providers that support it
+   * (Claude) use this to raise or lower when conversation history is
+   * compacted. If omitted, the provider's built-in default applies.
+   */
+  autoCompactWindow?: number;
 }
 
 export interface QueryInput {
