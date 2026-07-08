@@ -2,6 +2,10 @@
 
 All notable changes to NanoClaw will be documented in this file.
 
+## [Unreleased]
+
+- **Per-group auto-compact window.** New `container_configs.auto_compact_window` column (migration 016) sets the Claude Code auto-compact threshold (tokens) per agent group. Materialized into `container.json` as `autoCompactWindow` and exported as `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the agent's SDK env; precedence is per-group config > env override > the built-in 165000 default. Set via `ncl groups config update --id <group> --auto-compact-window <tokens|default>`. Useful for groups running large-context models (Sonnet 5 is natively 1M). Requires a container image rebuild to take effect.
+
 ## [fork-sync 2.0.76] - 2026-06-06
 
 Synced the vosburg-auto fork to upstream `qwibitai/nanoclaw` **v2.0.76** (from v2.0.71). 16 upstream commits merged; the only conflict was `package.json` (version), auto-resolved. All fork customizations carried forward unchanged: the Telegram channel (`telegram.ts`, `telegram-pairing.ts`, markdown sanitizer), the `context-awareness` / `gemini-companion` / `opus-escalation` container skills, OneCLI approval handling, webhook-server changes, and the Dockerfile apt-package bake.
