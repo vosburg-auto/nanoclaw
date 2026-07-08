@@ -22,6 +22,7 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     image_tag: row.image_tag,
     assistant_name: row.assistant_name,
     max_messages_per_prompt: row.max_messages_per_prompt,
+    auto_compact_window: row.auto_compact_window,
     skills: JSON.parse(row.skills),
     mcp_servers: JSON.parse(row.mcp_servers),
     packages_apt: JSON.parse(row.packages_apt),
@@ -213,7 +214,8 @@ registerResource({
       access: 'approval',
       description:
         'Update container config scalar fields. Changes are saved but do NOT take effect until you run `ncl groups restart`. ' +
-        'Use --id <group-id> and any of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope.',
+        'Use --id <group-id> and any of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, --auto-compact-window. ' +
+        '--auto-compact-window takes a token count (e.g. 450000) or "default" to revert to the provider default.',
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
@@ -223,7 +225,14 @@ registerResource({
         const updates: Partial<
           Pick<
             ContainerConfigRow,
-            'provider' | 'model' | 'effort' | 'image_tag' | 'assistant_name' | 'max_messages_per_prompt' | 'cli_scope'
+            | 'provider'
+            | 'model'
+            | 'effort'
+            | 'image_tag'
+            | 'assistant_name'
+            | 'max_messages_per_prompt'
+            | 'cli_scope'
+            | 'auto_compact_window'
           >
         > = {};
         if (args.provider !== undefined) updates.provider = args.provider as string;
@@ -240,10 +249,22 @@ registerResource({
           }
           updates.cli_scope = scope;
         }
+        if (args['auto-compact-window'] !== undefined || args.auto_compact_window !== undefined) {
+          const raw = (args['auto-compact-window'] ?? args.auto_compact_window) as string;
+          if (raw === 'default') {
+            updates.auto_compact_window = null;
+          } else {
+            const n = Number(raw);
+            if (!Number.isInteger(n) || n <= 0) {
+              throw new Error('--auto-compact-window must be a positive integer (tokens) or "default"');
+            }
+            updates.auto_compact_window = n;
+          }
+        }
 
         if (Object.keys(updates).length === 0) {
           throw new Error(
-            'Nothing to update — provide at least one of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope',
+            'Nothing to update — provide at least one of: --provider, --model, --effort, --image-tag, --assistant-name, --max-messages-per-prompt, --cli-scope, --auto-compact-window',
           );
         }
 
