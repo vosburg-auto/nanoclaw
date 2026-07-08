@@ -323,6 +323,18 @@ function transcriptStartMs(transcriptPath: string): number | null {
 const CLAUDE_CODE_AUTO_COMPACT_WINDOW = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW || '165000';
 
 /**
+ * Resolve the effective auto-compact window for a session's SDK env.
+ * Exported for tests; `envDefault` is injectable so the precedence logic is
+ * testable without mutating or reloading module-level env state.
+ */
+export function resolveAutoCompactWindow(
+  configured?: number,
+  envDefault: string = CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+): string {
+  return configured != null ? String(configured) : envDefault;
+}
+
+/**
  * Stale-session detection. Matches Claude Code's error text when a
  * resumed session can't be found — missing transcript .jsonl, unknown
  * session ID, etc.
@@ -347,8 +359,7 @@ export class ClaudeProvider implements AgentProvider {
     this.effort = options.effort;
     this.env = {
       ...(options.env ?? {}),
-      CLAUDE_CODE_AUTO_COMPACT_WINDOW:
-        options.autoCompactWindow != null ? String(options.autoCompactWindow) : CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+      CLAUDE_CODE_AUTO_COMPACT_WINDOW: resolveAutoCompactWindow(options.autoCompactWindow),
     };
   }
 

@@ -24,7 +24,7 @@ vi.mock('../../config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-cli-groups-config';
 
 import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
-import { ensureContainerConfig, getContainerConfig } from '../../db/container-configs.js';
+import { createContainerConfig, ensureContainerConfig, getContainerConfig } from '../../db/container-configs.js';
 import { configFromDb } from '../../container-config.js';
 import type { AgentGroup } from '../../types.js';
 import { dispatch } from '../dispatch.js';
@@ -93,5 +93,33 @@ describe('groups config update --auto-compact-window', () => {
     // provider default rather than a schema-level constant.
     const raw = getDb().prepare('SELECT auto_compact_window FROM container_configs WHERE agent_group_id = ?').get(GID);
     expect(raw).toEqual({ auto_compact_window: null });
+  });
+
+  it('createContainerConfig persists every typed field, including cli_scope and auto_compact_window', () => {
+    // Regression for the silent-drop hazard: better-sqlite3 ignores bound
+    // properties the INSERT doesn't reference, so a column missing from the
+    // statement silently gets its SQL default instead of the caller's value.
+    const GID2 = 'ag-acw-insert';
+    createAgentGroup({ id: GID2, name: 'acw2', folder: 'acw2', agent_provider: null, created_at: now() });
+    createContainerConfig({
+      agent_group_id: GID2,
+      provider: 'claude',
+      model: null,
+      effort: null,
+      image_tag: null,
+      assistant_name: null,
+      max_messages_per_prompt: null,
+      skills: '"all"',
+      mcp_servers: '{}',
+      packages_apt: '[]',
+      packages_npm: '[]',
+      additional_mounts: '[]',
+      cli_scope: 'global',
+      auto_compact_window: 450000,
+      updated_at: now(),
+    });
+    const row = getContainerConfig(GID2)!;
+    expect(row.cli_scope).toBe('global');
+    expect(row.auto_compact_window).toBe(450000);
   });
 });

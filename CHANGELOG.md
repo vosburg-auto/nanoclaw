@@ -4,7 +4,7 @@ All notable changes to NanoClaw will be documented in this file.
 
 ## [Unreleased]
 
-- **Per-group auto-compact window.** New `container_configs.auto_compact_window` column (migration 016) sets the Claude Code auto-compact threshold (tokens) per agent group. Materialized into `container.json` as `autoCompactWindow` and exported as `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the agent's SDK env; precedence is per-group config > env override > the built-in 165000 default. Set via `ncl groups config update --id <group> --auto-compact-window <tokens|default>`. Useful for groups running large-context models (Sonnet 5 is natively 1M). Requires a container image rebuild to take effect.
+- **Per-group auto-compact window.** New `container_configs.auto_compact_window` column (migration 016) sets the Claude Code auto-compact threshold (tokens) per agent group. Materialized into `container.json` as `autoCompactWindow` and exported as `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the agent's SDK env; precedence is per-group config > env override > the built-in 165000 default. Set via `ncl groups config update --id <group> --auto-compact-window <tokens|default>`. Useful for groups running large-context models (Sonnet 5 is natively 1M). No image rebuild needed — agent-runner source is bind-mounted read-only into containers; `ncl groups restart` picks it up.
 
 ## [fork-sync 2.0.76] - 2026-06-06
 
