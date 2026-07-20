@@ -1,4 +1,5 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import os from 'os';
 
 // Mock log
 vi.mock('./log.js', () => ({
@@ -20,6 +21,7 @@ vi.mock('child_process', () => ({
 import {
   CONTAINER_RUNTIME_BIN,
   readonlyMountArgs,
+  hostGatewayArgs,
   stopContainer,
   ensureContainerRuntimeRunning,
   cleanupOrphans,
@@ -37,6 +39,38 @@ describe('readonlyMountArgs', () => {
   it('returns -v flag with :ro suffix', () => {
     const args = readonlyMountArgs('/host/path', '/container/path');
     expect(args).toEqual(['-v', '/host/path:/container/path:ro']);
+  });
+});
+
+describe('hostGatewayArgs', () => {
+  const saved = process.env.NANOCLAW_HOST_GATEWAY_IP;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.NANOCLAW_HOST_GATEWAY_IP;
+    else process.env.NANOCLAW_HOST_GATEWAY_IP = saved;
+  });
+
+  it('points host.docker.internal at NANOCLAW_HOST_GATEWAY_IP when set', () => {
+    // The ss-smith-vm case: nanoclaw runs on a different box than the services
+    // containers reach via "the host" (OneCLI credential proxy, notify endpoints).
+    process.env.NANOCLAW_HOST_GATEWAY_IP = '192.168.10.36';
+    expect(hostGatewayArgs()).toEqual(['--add-host=host.docker.internal:192.168.10.36']);
+  });
+
+  it('ignores an empty override and falls through to the platform default', () => {
+    // An empty env var must not produce `--add-host=host.docker.internal:` (a malformed
+    // flag docker rejects) — it means "unset", so the platform default applies.
+    process.env.NANOCLAW_HOST_GATEWAY_IP = '';
+    expect(hostGatewayArgs()).not.toContain('--add-host=host.docker.internal:');
+  });
+
+  it('falls back to host-gateway on Linux when no override is set', () => {
+    delete process.env.NANOCLAW_HOST_GATEWAY_IP;
+    const args = hostGatewayArgs();
+    if (os.platform() === 'linux') {
+      expect(args).toEqual(['--add-host=host.docker.internal:host-gateway']);
+    } else {
+      expect(args).toEqual([]);
+    }
   });
 });
 

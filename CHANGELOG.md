@@ -4,6 +4,7 @@ All notable changes to NanoClaw will be documented in this file.
 
 ## [Unreleased]
 
+- **`NANOCLAW_HOST_GATEWAY_IP` points `host.docker.internal` at a remote host.** When set, `hostGatewayArgs()` emits `--add-host=host.docker.internal:<ip>` instead of the platform default, so containers reach the credential proxy and notify endpoints on another box — for installs where nanoclaw does not run on the machine those services live on. An empty value is treated as unset and falls through to the existing behaviour (`host-gateway` on Linux, nothing elsewhere), rather than emitting a malformed flag. Behaviour with the variable unset is unchanged. Adds the first test coverage for `hostGatewayArgs()`.
 - **Per-group auto-compact window.** New `container_configs.auto_compact_window` column (migration 016) sets the Claude Code auto-compact threshold (tokens) per agent group. Materialized into `container.json` as `autoCompactWindow` and exported as `CLAUDE_CODE_AUTO_COMPACT_WINDOW` in the agent's SDK env; precedence is per-group config > env override > the built-in 165000 default. Set via `ncl groups config update --id <group> --auto-compact-window <tokens|default>`. Useful for groups running large-context models (Sonnet 5 is natively 1M). No image rebuild needed — agent-runner source is bind-mounted read-only into containers; `ncl groups restart` picks it up.
 
 ## [fork-sync 2.0.76] - 2026-06-06
