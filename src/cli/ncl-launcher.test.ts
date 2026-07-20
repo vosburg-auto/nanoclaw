@@ -14,7 +14,7 @@
 // pnpm nor a real tsx to be installed on the machine running them.
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { execFileSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, copyFileSync, rmSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
@@ -31,18 +31,20 @@ function writeStub(path: string, marker: string): void {
   chmodSync(path, 0o755);
 }
 
-/** Run the copied launcher. `pathDirs` becomes PATH, so pnpm's presence is controlled. */
+/**
+ * Run the copied launcher. `pathDirs` becomes PATH, so pnpm's presence is controlled.
+ *
+ * spawnSync (not execFileSync) so BOTH streams are captured on every exit path. An earlier
+ * revision returned a hardcoded `stderr: ''` on success, which silently made any stderr
+ * assertion on a passing run vacuous — it could never fail regardless of what the launcher
+ * actually wrote. Caught by the cross-model lens in panel review of #5.
+ */
 function runNcl(pathDirs: string[]): { status: number; stdout: string; stderr: string } {
-  try {
-    const stdout = execFileSync(join(root, 'bin', 'ncl'), ['groups', 'list'], {
-      encoding: 'utf8',
-      env: { PATH: pathDirs.join(':'), HOME: root },
-    });
-    return { status: 0, stdout, stderr: '' };
-  } catch (e) {
-    const err = e as { status?: number; stdout?: string; stderr?: string };
-    return { status: err.status ?? -1, stdout: err.stdout ?? '', stderr: err.stderr ?? '' };
-  }
+  const r = spawnSync(join(root, 'bin', 'ncl'), ['groups', 'list'], {
+    encoding: 'utf8',
+    env: { PATH: pathDirs.join(':'), HOME: root },
+  });
+  return { status: r.status ?? -1, stdout: r.stdout ?? '', stderr: r.stderr ?? '' };
 }
 
 beforeEach(() => {

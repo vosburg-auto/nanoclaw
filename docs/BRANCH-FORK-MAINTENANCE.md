@@ -60,6 +60,7 @@ The same files conflict every time:
 | `pnpm-lock.yaml` | `git checkout main -- pnpm-lock.yaml && pnpm install` |
 | `.env.example` | Combine: main's entries + fork/branch-specific entries |
 | `repo-tokens/badge.svg` | Take main's version (auto-generated) |
+| `bin/ncl` | **Keep the fork's runner-resolution block.** Upstream's launcher ends at `exec pnpm exec tsx …`; the fork resolves `node_modules/.bin/tsx` first, then falls back to pnpm, then fails loudly — without it the CLI is unusable on hosts that have deps installed but no pnpm on PATH (ss-smith-vm). Post-sync check: `pnpm exec vitest run src/cli/ncl-launcher.test.ts` (4 cases, pins the resolution order). |
 
 Source code changes (e.g. `src/types.ts`, `src/index.ts`) usually auto-merge cleanly, but can conflict if both sides modify the same lines. **Always build and test after every forward merge** — auto-merged code can be silently wrong (e.g. referencing a renamed function or using a removed parameter) even when git reports no conflicts.
 
