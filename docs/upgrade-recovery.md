@@ -40,6 +40,27 @@ pnpm exec tsx scripts/upgrade-state.ts set
 
 That's the same thing `/setup`, `/update-nanoclaw`, and `/migrate-nanoclaw` do at the end. Do it only when the upgrade actually completed — the marker is your assertion that this install reached the current version through a path you trust.
 
+### When the upgrade steps themselves need `ncl` (fork addition)
+
+"Stamp last" and "the host won't boot until you stamp" are in direct tension the moment an upgrade step needs the host. `/migrate-memory` is exactly that case: it calls `ncl groups list` and `ncl tasks pause`, and `ncl` speaks over `data/ncl.sock`, which only exists after boot. Doing those steps in the sanctioned order is otherwise impossible.
+
+Run them offline instead. Neither command starts a listener, opens a channel, or writes the marker:
+
+```bash
+# Schema migrations, no host process. TAKE THE DB SNAPSHOT FIRST —
+# migration 016 drops and recreates messaging_groups with no down migration.
+pnpm exec tsx scripts/offline-migrate.ts --check    # report only
+pnpm exec tsx scripts/offline-migrate.ts            # apply
+
+# Any ncl command, dispatched in-process against data/v2.db.
+NANOCLAW_OFFLINE=1 ncl groups list
+NANOCLAW_OFFLINE=1 ncl tasks pause <series-id> --group <group-id>
+```
+
+Then finish the upgrade and stamp the marker last, as above.
+
+Offline `ncl` runs as a **host** caller, which is the same authority you already have running `ncl` against `data/ncl.sock` — the approval gate holds agent-initiated calls, not operator ones. It reaches that authority through file access to `data/v2.db` rather than to the socket, so the owner-only precondition is unchanged. Containers cannot use it: the agent-runner never mounts the host's data directory.
+
 ## The override
 
 `pnpm exec tsx scripts/upgrade-state.ts set` is the override: it declares "this install is good at the current version." Use it when you know the install is actually in a good state (e.g. you completed the steps manually). It's safe to re-run.

@@ -19,6 +19,7 @@ import { randomUUID } from 'crypto';
 
 import { formatResponse } from './format.js';
 import type { RequestFrame } from './frame.js';
+import { OfflineTransport, offlineRequested } from './offline-transport.js';
 import { SocketTransport } from './socket-client.js';
 import type { Transport } from './transport.js';
 import { formatTransportError } from './transport-errors.js';
@@ -54,6 +55,12 @@ async function main(): Promise<void> {
 }
 
 function pickTransport(): Transport {
+  // Fork patch (vosburg-auto): NANOCLAW_OFFLINE routes `ncl` at data/v2.db
+  // instead of data/ncl.sock, so the upgrade runbook can run `ncl groups list`
+  // / `ncl tasks pause` BEFORE the host is allowed to boot. Without it the
+  // sanctioned order is unreachable — see src/cli/offline-transport.ts for the
+  // deadlock and why this is a transport rather than a boot flag.
+  if (offlineRequested()) return new OfflineTransport();
   return new SocketTransport();
 }
 

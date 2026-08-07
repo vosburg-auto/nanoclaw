@@ -120,6 +120,13 @@
       "guard_waiver": "Self-referential; `node scripts/fork-surface.mjs check` is its guard and runs in CI."
     },
     {
+      "path": "docs/upgrade-recovery.md",
+      "kind": "doc",
+      "status": "carried",
+      "intent": "Documents the offline path out of the upgrade deadlock (offline-migrate.ts + NANOCLAW_OFFLINE ncl), and states why offline ncl is not a privilege change.",
+      "guard_waiver": "Prose. The behavior it describes is guarded by src/cli/offline-transport.test.ts; a doc guard would assert that a file contains sentences."
+    },
+    {
       "path": "migrate-v2.sh",
       "kind": "source",
       "status": "carried",
@@ -153,6 +160,13 @@
       "status": "carried",
       "intent": "Derives the fork patch surface by blob membership and checks it against the manifest.",
       "guard": "node scripts/fork-surface.mjs check"
+    },
+    {
+      "path": "scripts/offline-migrate.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Operator entry point that runs the central-DB schema migrations with no host process \u2014 the other half of the upgrade deadlock. Deliberately does NOT stamp the upgrade marker; stamping stays a separate last step.",
+      "guard_waiver": "Operator-invoked script with no in-process caller: its body is initDb + runMigrations, both covered by the host's own migration tests. A guard here would assert that a script calls two functions, which the type checker already enforces."
     },
     {
       "path": "setup/env-secret-callers.test.ts",
@@ -236,10 +250,31 @@
       "guard": "pnpm exec vitest run src/channels/telegram-allowed-updates.test.ts"
     },
     {
+      "path": "src/cli/client.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "One-branch seam in pickTransport(): NANOCLAW_OFFLINE routes ncl through OfflineTransport instead of the socket. The whole runtime effect of offline mode hangs on this branch, so the guard asserts it at source level (client.ts self-executes main() and cannot be imported into a test).",
+      "guard": "npx vitest run src/cli/offline-transport.test.ts"
+    },
+    {
       "path": "src/cli/ncl-launcher.test.ts",
       "kind": "test",
       "status": "carried",
       "intent": "Pins bin/ncl's runner resolution order."
+    },
+    {
+      "path": "src/cli/offline-transport.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Mutation-checked guard for the offline transport. Fork-owned filename on purpose \u2014 src/cli/client.test.ts is a name upstream owns, and a wholesale take of such a file deletes feature and detector together (the v2.1.54 lesson).",
+      "guard": "npx vitest run src/cli/offline-transport.test.ts"
+    },
+    {
+      "path": "src/cli/offline-transport.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Offline `ncl` transport: dispatch in-process against data/v2.db so the upgrade runbook can run `ncl groups list` / `ncl tasks pause` before the host is allowed to boot. Without it the sanctioned order is unreachable \u2014 /migrate-memory needs ncl, ncl needs the host, the host needs the upgrade marker, and the marker must be stamped LAST.",
+      "guard": "npx vitest run src/cli/offline-transport.test.ts"
     },
     {
       "path": "src/cli/resources/groups-config.test.ts",
