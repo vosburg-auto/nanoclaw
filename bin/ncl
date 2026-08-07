@@ -24,21 +24,4 @@ SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
-
-# Resolve a tsx runner. Prefer the checkout's OWN binary: a host can have deps
-# installed but no pnpm on PATH (the deployed ss-smith-vm case — node_modules
-# present, pnpm absent), and `pnpm exec` there fails with "exec: pnpm: not found",
-# taking the whole CLI down with it. Falling back to pnpm keeps behaviour identical
-# on dev boxes that have it but haven't installed into node_modules.
-if [ -x "$PROJECT_ROOT/node_modules/.bin/tsx" ]; then
-  exec "$PROJECT_ROOT/node_modules/.bin/tsx" src/cli/client.ts "$@"
-elif command -v pnpm >/dev/null 2>&1; then
-  exec pnpm exec tsx src/cli/client.ts "$@"
-fi
-
-# Deliberately no npx fallback: npx would silently download tsx from the network on
-# a box that has neither, which is a surprising side effect for a CLI launcher.
-# Fail loudly with the fix instead.
-echo "ncl: no tsx runner found in $PROJECT_ROOT" >&2
-echo "ncl: install dependencies (pnpm install) so node_modules/.bin/tsx exists, or put pnpm on PATH." >&2
-exit 1
+exec pnpm exec tsx src/cli/client.ts "$@"
