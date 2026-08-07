@@ -209,6 +209,20 @@ function createPairingInterceptor(
   };
 }
 
+/**
+ * Fork patch (vosburg-auto): the long-polling update types we subscribe to.
+ *
+ * `message` + `edited_message` are the upstream baseline. `message_reaction`
+ * unlocks 👍/👎 ingestion (Chat SDK already routes via processReaction);
+ * `callback_query` is the transport the OneCLI approval cards ride on — drop it
+ * and approvals simply stop being answerable, with nothing going red.
+ *
+ * Exported so `telegram-allowed-updates.test.ts` can pin the set: this hunk sits
+ * in an upstream-owned file and by our own account recurs at every sync.
+ * See docs/BRANCH-FORK-MAINTENANCE.md.
+ */
+export const TELEGRAM_ALLOWED_UPDATES = ['message', 'edited_message', 'callback_query', 'message_reaction'] as const;
+
 registerChannelAdapter('telegram', {
   factory: () => {
     const env = readEnvFile(['TELEGRAM_BOT_TOKEN']);
@@ -218,11 +232,8 @@ registerChannelAdapter('telegram', {
       botToken: token,
       mode: 'polling',
       longPolling: {
-        // message + edited_message are the existing baseline; message_reaction
-        // unlocks 👍/👎 ingestion (Chat SDK already routes via processReaction);
-        // callback_query is included pre-emptively so future inline-keyboard
-        // work doesn't need another config edit.
-        allowedUpdates: ['message', 'edited_message', 'callback_query', 'message_reaction'],
+        // See TELEGRAM_ALLOWED_UPDATES above for why each type is in the set.
+        allowedUpdates: [...TELEGRAM_ALLOWED_UPDATES],
       },
     });
     const bridge = createChatSdkBridge({

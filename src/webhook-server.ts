@@ -17,10 +17,32 @@ import type { Chat } from 'chat';
 import { log } from './log.js';
 
 const DEFAULT_PORT = 3000;
+const DEFAULT_BIND = '127.0.0.1';
 
 interface WebhookEntry {
   chat: Chat;
   adapterName: string;
+}
+
+/**
+ * Resolve the listen address from the environment.
+ *
+ * Defaults to loopback so the webhook port is not exposed to the LAN. Set
+ * `WEBHOOK_BIND=0.0.0.0` (or a specific interface IP) to opt into external
+ * exposure — typically you want a reverse proxy in front instead.
+ *
+ * Fork patch (vosburg-auto): upstream binds 0.0.0.0 unconditionally. Carried
+ * forward at every sync — see docs/BRANCH-FORK-MAINTENANCE.md. The guarding
+ * cases live in `webhook-server.bind.test.ts`, deliberately NOT in
+ * `webhook-server.test.ts`: upstream owns that filename and overwrote our
+ * copy (with its six bind assertions) during the v2.1.54 sync, which is how
+ * this patch was silently lost while CI stayed green.
+ */
+export function resolveListenConfig(env: NodeJS.ProcessEnv): { port: number; bind: string } {
+  const portRaw = env.WEBHOOK_PORT;
+  const port = portRaw ? parseInt(portRaw, 10) : DEFAULT_PORT;
+  const bind = env.WEBHOOK_BIND || DEFAULT_BIND;
+  return { port, bind };
 }
 
 /** Node-style handler for raw (non-Chat-SDK) webhook routes. */
@@ -110,7 +132,7 @@ export function registerWebhookHandler(path: string, handler: RawWebhookHandler)
 function ensureServer(): void {
   if (server) return;
 
-  const port = parseInt(process.env.WEBHOOK_PORT || String(DEFAULT_PORT), 10);
+  const { port, bind } = resolveListenConfig(process.env);
 
   server = http.createServer(async (req, res) => {
     const url = req.url || '/';
@@ -159,8 +181,8 @@ function ensureServer(): void {
     }
   });
 
-  server.listen(port, '0.0.0.0', () => {
-    log.info('Webhook server started', { port, adapters: [...routes.keys()] });
+  server.listen(port, bind, () => {
+    log.info('Webhook server started', { port, bind, adapters: [...routes.keys()] });
   });
 }
 

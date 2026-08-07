@@ -20,6 +20,8 @@
  */
 import { OneCLI, type ApprovalRequest, type ManualApprovalHandle } from '@onecli-sh/sdk';
 
+import { generateApprovalId } from './approval-id.js';
+
 import { pickApprovalDelivery, pickApprover } from './primitive.js';
 import { ONECLI_API_KEY, ONECLI_URL } from '../../config.js';
 import { getAgentGroup } from '../../db/agent-groups.js';
@@ -57,13 +59,16 @@ let adapterRef: ChannelDeliveryAdapter | null = null;
  * serializes both `id` and `value` into the Telegram `callback_data` field,
  * which has a hard 64-byte limit. UUIDs push past that limit.
  *
- * Instead we generate a 10-byte id (`oa-` + 8 base36 chars) for the card, and
- * keep the OneCLI request.id in the persisted payload for audit. The pending
- * map, DB row, and button callback all use this short id; click handling
- * looks up the short id and resolves the Promise that was waiting on it.
+ * Instead we generate a 25-char id (`oa-` + 22 base64url chars = 128 bits) for
+ * the card, and keep the OneCLI request.id in the persisted payload for audit.
+ * The pending map, DB row, and button callback all use this short id; click
+ * handling looks up the short id and resolves the Promise that was waiting on it.
+ *
+ * Entropy and the callback_data budget both live in the fork-owned
+ * `approval-id.ts` — see its header for why the CSPRNG is not inlined here.
  */
 export function shortApprovalId(): string {
-  return `oa-${Math.random().toString(36).slice(2, 10)}`;
+  return generateApprovalId('oa');
 }
 
 /** Called from the approvals response handler when a card button is clicked. */

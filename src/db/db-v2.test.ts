@@ -34,6 +34,8 @@ import {
   getContainerConfig,
   createContainerConfig,
 } from './index.js';
+import { migrations } from './migrations/index.js';
+import { forkAutoCompactWindow } from './migrations/fork-auto-compact-window.js';
 
 function now() {
   return new Date().toISOString();
@@ -72,6 +74,45 @@ describe('migrations', () => {
     expect(col!.type).toBe('INTEGER');
     expect(col!.notnull).toBe(0);
     expect(col!.dflt_value).toBeNull();
+  });
+
+  // ── Fork-sync upgrade path ──
+  //
+  // The v2.1.54 sync had to renumber the fork's `016-auto-compact-window`
+  // because upstream claimed 016-021. That rename is safe ONLY because
+  // schema_version is keyed on `name`, never on `version` — and until this test
+  // existed, nothing in the repo enforced it. A drifted `name` re-runs `up()`
+  // against a table that already has the column; `runMigrations` throws out of
+  // `main()` at boot, so the single production install crash-loops.
+  it('does not re-run the fork migration on a DB that applied it under its pre-sync number', () => {
+    const db = initTestDb();
+
+    // Reproduce the deployed state: every migration EXCEPT the fork one, then
+    // the fork migration under its old 016 identity (same `name`, old `version`).
+    const preSync = migrations.filter((m) => m.name !== 'auto-compact-window');
+    runMigrations(db, preSync);
+    runMigrations(db, [{ ...forkAutoCompactWindow, version: 16 }]);
+
+    const before = db.prepare('SELECT name FROM schema_version').all() as { name: string }[];
+    expect(before.some((r) => r.name === 'auto-compact-window')).toBe(true);
+
+    // The post-sync barrel must be a no-op here — not a duplicate-column throw.
+    expect(() => runMigrations(db)).not.toThrow();
+
+    const after = db.prepare('SELECT name FROM schema_version').all() as { name: string }[];
+    expect(after.filter((r) => r.name === 'auto-compact-window')).toHaveLength(1);
+    expect(after).toHaveLength(before.length);
+  });
+
+  it('survives a drifted fork-migration name without crash-looping the host', () => {
+    // Defence in depth for the invariant above: if a future sync DOES change
+    // the `name`, the PRAGMA table_info guard must absorb the re-run. Without
+    // it this throws `duplicate column name: auto_compact_window`.
+    const db = initTestDb();
+    runMigrations(db);
+    expect(() => runMigrations(db, [{ ...forkAutoCompactWindow, name: 'auto-compact-window-renamed' }])).not.toThrow();
+    const cols = db.prepare("PRAGMA table_info('container_configs')").all() as { name: string }[];
+    expect(cols.filter((c) => c.name === 'auto_compact_window')).toHaveLength(1);
   });
 
   it('persists approval card bodies for terminal rendering (021)', () => {

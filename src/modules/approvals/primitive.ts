@@ -21,6 +21,7 @@
  * exposing just user-roles/user-dms) is more churn than it's worth. Revisit
  * if either module becomes genuinely optional (see REFACTOR_PLAN open q #3).
  */
+import { generateApprovalId } from './approval-id.js';
 import { normalizeOptions, type RawOption } from '../../channels/ask-question.js';
 import { getMessagingGroup } from '../../db/messaging-groups.js';
 import { createPendingApproval, deletePendingApproval, getSession } from '../../db/sessions.js';
@@ -245,7 +246,15 @@ export async function requestApproval(opts: RequestApprovalOptions): Promise<voi
     return;
   }
 
-  const approvalId = `appr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  // A callback with this id triggers `handleApprovalsResponse` → the
+  // `isAuthorizedApprovalClick` check is the load-bearing defense, but the id
+  // itself is unguessable too (128-bit CSPRNG, see approval-id.ts) so a
+  // hypothetical bypass of that check doesn't fall back on a ~31-bit
+  // Math.random()+timestamp secret.
+  // Prefix is 'ap', not 'appr': with the 22-char CSPRNG body and the
+  // `reject_with_reason` button value, a 4-char prefix exceeds Telegram's
+  // 64-byte callback_data limit by one byte. Nothing parses this prefix.
+  const approvalId = generateApprovalId('ap');
   const normalizedOptions = normalizeOptions(APPROVAL_OPTIONS);
   createPendingApproval({
     approval_id: approvalId,

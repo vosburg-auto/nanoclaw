@@ -24,6 +24,16 @@ describe('shortApprovalId', () => {
     expect(/^oa-[A-Za-z0-9_-]+$/.test(id)).toBe(true);
   });
 
+  it('carries at least 128 bits of entropy', () => {
+    // The character-class assertion above CANNOT catch a revert to
+    // `Math.random().toString(36)`: base36 is a strict subset of base64url, so
+    // the weak id matches the same regex. The v2.1.54 sync reverted this very
+    // function and the suite stayed green. Assert the decoded byte length —
+    // the one property Math.random() cannot fake.
+    const id = shortApprovalId();
+    expect(Buffer.from(id.slice('oa-'.length), 'base64url').byteLength).toBeGreaterThanOrEqual(16);
+  });
+
   it('fits inside Chat SDK callback_data wrapping for the longer button value', () => {
     // chat:{"a":"<id>","v":"<value>"} — see @chat-adapter/telegram callback encoder.
     const wrap = (id: string, value: string): string => `chat:${JSON.stringify({ a: id, v: value })}`;

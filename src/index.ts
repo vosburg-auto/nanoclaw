@@ -61,12 +61,21 @@ import {
 async function main(): Promise<void> {
   log.info('NanoClaw starting');
 
-  // 0. Circuit breaker — backoff on rapid restarts
-  await enforceStartupBackoff();
-
-  // 0.5 Upgrade tripwire — refuse to start if this install was updated
-  // outside the sanctioned path (raw `git pull` instead of /update-nanoclaw).
+  // 0. Upgrade tripwire — refuse to start if this install was updated outside
+  // the sanctioned path (raw `git pull` instead of /update-nanoclaw).
+  //
+  // Ordered BEFORE the circuit breaker deliberately (fork patch, vosburg-auto).
+  // enforceStartupBackoff() persists an incremented attempt count before it
+  // sleeps, and resetCircuitBreaker() only runs from shutdown() — so with the
+  // tripwire second, a deterministic refusal-to-start (which exits before any
+  // clean shutdown) is recorded as a crash on every boot under Restart=always.
+  // The operator then stamps the marker, and the first CORRECT boot sleeps up
+  // to 900s logging "delaying startup due to repeated crashes". Refusing before
+  // the counter advances keeps the breaker measuring actual crashes.
   enforceUpgradeTripwire();
+
+  // 0.5 Circuit breaker — backoff on rapid restarts
+  await enforceStartupBackoff();
 
   // 1. Init central DB
   const dbPath = path.join(DATA_DIR, 'v2.db');

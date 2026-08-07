@@ -36,6 +36,28 @@ function parseTimezoneFlag(value: unknown): string | null | undefined {
   return tz;
 }
 
+/**
+ * Parse a flag that must carry a positive-integer value.
+ *
+ * The `typeof value !== 'string'` branch is load-bearing, not defensive: the
+ * arg parser (`src/cli/client.ts`) stores `true` for a flag with no following
+ * value, and `Number(true) === 1` satisfies `Number.isInteger(n) && n > 0`. So
+ * a bare `--auto-compact-window` silently wrote a window of 1 token — that
+ * group then compacts on every turn after a restart — while the error message
+ * claimed a guarantee the guard did not provide. Same hazard on every numeric
+ * flag, which is why this is one helper rather than a per-flag check.
+ */
+function parsePositiveIntFlag(name: string, value: unknown): number {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(`--${name} requires a value (a positive integer)`);
+  }
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) {
+    throw new Error(`--${name} must be a positive integer`);
+  }
+  return n;
+}
+
 /** Deserialize JSON columns for display. */
 function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
   return {
@@ -312,7 +334,10 @@ registerResource({
         if (args.image_tag !== undefined) updates.image_tag = args.image_tag as string;
         if (args.assistant_name !== undefined) updates.assistant_name = args.assistant_name as string;
         if (args.max_messages_per_prompt !== undefined)
-          updates.max_messages_per_prompt = Number(args.max_messages_per_prompt);
+          updates.max_messages_per_prompt = parsePositiveIntFlag(
+            'max-messages-per-prompt',
+            args.max_messages_per_prompt,
+          );
         if (args['cli-scope'] !== undefined || args.cli_scope !== undefined) {
           const scope = (args['cli-scope'] ?? args.cli_scope) as string;
           if (!['disabled', 'group', 'global'].includes(scope)) {
@@ -321,15 +346,11 @@ registerResource({
           updates.cli_scope = scope;
         }
         if (args['auto-compact-window'] !== undefined || args.auto_compact_window !== undefined) {
-          const raw = (args['auto-compact-window'] ?? args.auto_compact_window) as string;
+          const raw = args['auto-compact-window'] ?? args.auto_compact_window;
           if (raw === 'default') {
             updates.auto_compact_window = null;
           } else {
-            const n = Number(raw);
-            if (!Number.isInteger(n) || n <= 0) {
-              throw new Error('--auto-compact-window must be a positive integer (tokens) or "default"');
-            }
-            updates.auto_compact_window = n;
+            updates.auto_compact_window = parsePositiveIntFlag('auto-compact-window', raw);
           }
         }
 

@@ -51,15 +51,57 @@ This procedure assumes the branch is reasonably current. A registry branch left 
 
 Files with known mechanical resolutions:
 
-| File | Resolution |
-|------|------------|
-| `package.json` | Take main's version + keep branch-specific deps |
-| `pnpm-lock.yaml` | `git checkout main -- pnpm-lock.yaml && pnpm install` |
-| `.env.example` | Combine: main's entries + branch-specific entries |
-| `repo-tokens/badge.svg` | Take main's version (auto-generated) |
-| `bin/ncl` | **Keep the fork's runner-resolution block.** Upstream's launcher ends at `exec pnpm exec tsx …`; the fork resolves `node_modules/.bin/tsx` first, then falls back to pnpm, then fails loudly — without it the CLI is unusable on hosts that have deps installed but no pnpm on PATH (ss-smith-vm). Post-sync check: `pnpm exec vitest run src/cli/ncl-launcher.test.ts` (4 cases, pins the resolution order). |
+| File                    | Resolution                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `package.json`          | Take main's version + keep branch-specific deps                                                                                                                                                                                                                                                                                                                                                               |
+| `pnpm-lock.yaml`        | `git checkout main -- pnpm-lock.yaml && pnpm install`                                                                                                                                                                                                                                                                                                                                                         |
+| `.env.example`          | Combine: main's entries + branch-specific entries                                                                                                                                                                                                                                                                                                                                                             |
+| `repo-tokens/badge.svg` | Take main's version (auto-generated)                                                                                                                                                                                                                                                                                                                                                                          |
+| `bin/ncl`               | **Keep the fork's runner-resolution block.** Upstream's launcher ends at `exec pnpm exec tsx …`; the fork resolves `node_modules/.bin/tsx` first, then falls back to pnpm, then fails loudly — without it the CLI is unusable on hosts that have deps installed but no pnpm on PATH (ss-smith-vm). Post-sync check: `pnpm exec vitest run src/cli/ncl-launcher.test.ts` (4 cases, pins the resolution order). |
 
 Source code changes (e.g. `src/types.ts`, `src/index.ts`) usually auto-merge cleanly, but can conflict if both sides modify the same lines. **Always build and test after every forward merge** — auto-merged code can be silently wrong (e.g. referencing a renamed function or using a removed parameter) even when git reports no conflicts.
+
+## Fork carry-forward registry (vosburg-auto)
+
+Every patch this fork carries on top of upstream, with the check that proves it survived. **A patch not in this table will be lost at some sync** — that is not a prediction, it is what happened to the webhook loopback bind and the CSPRNG approval ids during the v2.1.54 sync.
+
+### Deriving the surface mechanically — do this FIRST, every sync
+
+Do not enumerate fork patches by memory or by looking for fork-owned _files_. "Files in HEAD that never existed upstream" is structurally blind to patches applied to files that also exist upstream — the class that contains every hardening lost in v2.1.54. Instead, ask which **blobs** in the fork's tree appear nowhere in upstream's history:
+
+```bash
+git fetch upstream --prune
+git rev-list --objects --remotes=upstream | awk '{print $1}' | sort -u > /tmp/upstream_blobs
+git ls-tree -r origin/main --format='%(objectname) %(path)' \
+  | awk 'NR==FNR{u[$1];next} !($1 in u){print $2}' /tmp/upstream_blobs - \
+  | sort
+```
+
+Note `--remotes=upstream` with **no** `--all`: adding `--all` pulls in the fork's own refs and the query silently returns nothing.
+
+Every path it prints is fork-modified content. Reconcile that list against the table below item by item, and for anything you intend to drop, state "superseded upstream" with the reason. After the sync, re-run it against the sync branch: a path that was fork-modified before and now matches an upstream blob exactly has been **reverted**, not merged.
+
+### The registry
+
+| Patch                                  | Intent                                                                                                    | Resolution                                                                                                                                      | Post-sync check                                                      |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `bin/ncl` runner resolution            | CLI must work on hosts with deps installed but no pnpm on PATH (ss-smith-vm)                              | **Keep the fork's block.** Upstream's launcher ends at `exec pnpm exec tsx …`                                                                   | `pnpm exec vitest run src/cli/ncl-launcher.test.ts`                  |
+| `src/webhook-server.ts` loopback bind  | Don't expose the webhook port to the LAN; `WEBHOOK_BIND` is the opt-in                                    | Re-apply `DEFAULT_BIND` + `resolveListenConfig` on top of upstream's file                                                                       | `pnpm exec vitest run src/webhook-server.bind.test.ts`               |
+| `src/modules/approvals/approval-id.ts` | Approval ids are capabilities; 128-bit CSPRNG, not `Math.random()`                                        | Fork-owned file; both call sites import it. Keep the `ap`/`oa` prefixes — longer ones bust Telegram's 64-byte `callback_data` budget            | `pnpm exec vitest run src/modules/approvals/approval-id.test.ts`     |
+| `.env` 0600 hardening                  | `.env` holds bot tokens; upstream rewrites these steps to bare `writeFileSync`                            | Rewire `setup/set-env.ts` + `setup/timezone.ts` through `writeSecretEnvFile`                                                                    | `pnpm exec vitest run setup/env-utils.test.ts`                       |
+| `container/Dockerfile` agent tooling   | Baked `ffmpeg`, `gh`, `openssh-client`, `jq` for report-TTS, GitHub CLI, the Pi fleet, and JSON in skills | Re-add the fork's `RUN apt-get …` layer before `# ---- Entrypoint`                                                                              | `grep -q 'openssh-client' container/Dockerfile`                      |
+| `NANOCLAW_HOST_GATEWAY_IP`             | nanoclaw runs on a different box than the services containers reach as "the host"                         | Keep `hostGatewayArgs()` in `src/container-runtime.ts`                                                                                          | `pnpm exec vitest run src/container-runtime.host-gateway.test.ts`    |
+| `TELEGRAM_ALLOWED_UPDATES`             | `callback_query` carries OneCLI approval clicks; `message_reaction` carries 👍/👎                         | Re-apply the `longPolling.allowedUpdates` hunk in `src/channels/telegram.ts`                                                                    | `pnpm exec vitest run src/channels/telegram-allowed-updates.test.ts` |
+| `fork-auto-compact-window` migration   | Per-group auto-compact threshold                                                                          | Keep `name: 'auto-compact-window'` — it is the `schema_version` key. The `fork-` filename + version 900 keep it out of upstream's numeric range | `pnpm exec vitest run src/db/db-v2.test.ts`                          |
+| `@chat-adapter/telegram` dependency    | Upstream keeps telegram on its `channels` branch, not `main`                                              | Re-add at the exact pin upstream's `channels` branch requires                                                                                   | `pnpm exec vitest run src/channels/telegram-registration.test.ts`    |
+| ShellCheck annotations                 | Four upstream shell files fail `shellcheck -S error`; upstream runs no ShellCheck                         | Comment-only re-apply                                                                                                                           | `shellcheck -S error $(git ls-files '*.sh')`                         |
+| `.gitignore` entries                   | Fork-local ignores                                                                                        | Combine, don't replace                                                                                                                          | —                                                                    |
+
+### Two rules the v2.1.54 sync bought the hard way
+
+1. **Fork tests go in fork-owned filenames.** `src/webhook-server.test.ts` held the six assertions guarding the loopback bind. Upstream owns that filename; taking upstream's copy deleted the feature and its detector in one commit, and CI stayed green. Hence `webhook-server.bind.test.ts`, `container-runtime.host-gateway.test.ts`, `telegram-allowed-updates.test.ts`, `approval-id.test.ts`.
+
+2. **A guard that cannot fail is not a guard.** The approval-id test asserted the id matched `[A-Za-z0-9_-]+`. Base36 is a subset of base64url, so it passed against the reverted `Math.random()` implementation. Assert the property that actually distinguishes the two — here, decoded byte length.
 
 ## When to merge forward
 
