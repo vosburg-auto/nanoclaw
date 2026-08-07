@@ -147,4 +147,44 @@ describe('requestApproval delivery failure', () => {
     expect(getPendingApprovalsByAction('test_action')).toHaveLength(1);
     expect(vi.mocked(writeSessionMessage)).not.toHaveBeenCalled();
   });
+
+  // Fork patch (vosburg-auto). approval-id.test.ts proves the generator is a
+  // CSPRNG; it does not prove requestApproval uses it. fork-guard-liveness.mjs
+  // reverted this file to upstream's `appr-${Date.now()}-${Math.random()...}`
+  // and that suite stayed green — helper intact, call site reverted, nothing
+  // red. That is the shape of the regression the v2.1.54 sync shipped.
+  it('mints approval ids from the fork CSPRNG generator, not Math.random', async () => {
+    setDeliveryAdapter({
+      async deliver() {
+        return 'pm-1';
+      },
+    });
+
+    await requestApproval({
+      session,
+      agentName: 'Agent',
+      action: 'test_action',
+      payload: { key: 'value' },
+      title: 'Test Approval',
+      question: 'Approve the thing?',
+    });
+
+    const [row] = getPendingApprovalsByAction('test_action');
+    expect(row).toBeDefined();
+
+    // Upstream's id is `appr-<millis>-<6 base36 chars>`; the fork's is
+    // `ap-<22 base64url chars>` = 128 bits. Assert the decoded byte length —
+    // a character-class check cannot tell them apart, because base36 is a
+    // strict subset of base64url. That exact mistake is why this fork lost
+    // the CSPRNG once already.
+    expect(row!.approval_id.startsWith('ap-')).toBe(true);
+    const raw = Buffer.from(row!.approval_id.slice('ap-'.length), 'base64url');
+    expect(raw.byteLength).toBeGreaterThanOrEqual(16);
+    expect(row!.approval_id).not.toMatch(/^appr-\d+-/);
+
+    // And it must fit the platform's 64-byte callback budget with the longest
+    // button value, which is what forced the short prefix.
+    const wrapped = `chat:${JSON.stringify({ a: row!.approval_id, v: 'reject_with_reason' })}`;
+    expect(Buffer.byteLength(wrapped, 'utf8')).toBeLessThanOrEqual(64);
+  });
 });
