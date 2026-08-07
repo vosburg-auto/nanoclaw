@@ -4,6 +4,17 @@ All notable changes to NanoClaw will be documented in this file.
 
 ## [Unreleased]
 
+### Fork (vosburg-auto)
+
+- **Synced the fork from v2.0.76 to upstream v2.1.54.** The upstream tree is taken wholesale and the fork's patches re-applied on top, rather than merged — the two previous syncs were squash-applied, so git has no merge base for anything they carried and a true merge conflicts on 109 files that are mostly an old upstream copy versus a newer one.
+- **Telegram now tracks `upstream/channels` instead of the fork's own copy.** Upstream maintains canonical `telegram.ts`, `telegram-pairing.ts`, and `telegram-markdown-sanitize.ts` there; ours had drifted only by lacking upstream's `TELEGRAM_DEFAULTS` (`ChannelDefaults`) declaration. Without that declaration `getChannelDefaults` falls back to `mention-sticky`, which on a non-threaded platform like Telegram engages once and then stays engaged forever. The fork's `longPolling.allowedUpdates` hunk (reactions + `callback_query`) is re-applied on top and should be sent upstream so this divergence stops recurring.
+- **Migration `016-auto-compact-window` renumbered to `022`** — upstream took 016 through 021. `schema_version` is keyed on the migration *name*, which stays `auto-compact-window`, so installs that already applied it do not re-run the `ALTER`.
+- **`container_configs` carries both `timezone` (upstream) and `auto_compact_window` (fork).** They landed on the same lines; the INSERT, column allowlist, row type, and `ContainerConfig` all list both.
+- **`.env` 0600 hardening restored.** Upstream's rewritten `set-env`/`timezone` setup steps had reverted to bare `fs.writeFileSync`, leaving `.env` (which holds bot tokens) at umask default; both are rewired through the fork's `writeSecretEnvFile`.
+- Carried forward unchanged: the baked agent-tooling Dockerfile layer (`ffmpeg`, `gh`, `openssh-client`, `jq`), `NANOCLAW_HOST_GATEWAY_IP`, the `bin/ncl` tsx-resolution block, and the fork's `.gitignore` entries. `@chat-adapter/telegram` is re-added at the `4.29.0` exact pin upstream now requires.
+
+### Upstream
+
 - **Agent-to-agent messaging no longer loses to Claude Code's built-in `SendMessage`.** That built-in addresses the SDK's own in-session subagents, so an agent that had just run `create_agent` reached for it by name and got `No agent named 'x' is currently addressable` — reading as "the group was never provisioned" while `mcp__nanoclaw__send_message` (the real path) was never called. `SendMessage` joins `AskUserQuestion` in `SDK_DISALLOWED_TOOLS`, so the PreToolUse hook now blocks it and points at the nanoclaw equivalent.
 - [BREAKING] **Existing Claude installs should review the hardened agent image.** Local builds remain supported, but the Echo-built image is recommended for patched sandbox components. **Migration:** follow [the hardened-image guide](docs/hardened-image.md) to detect your current image source, switch, verify, or roll back.
 - **Release publication tolerates GitHub API propagation.** The Release workflow now retries bounded post-publication read-backs when the new Release is not listed yet or its immutable state is not visible yet. Exact title, body, tag, or SHA mismatches still fail immediately.

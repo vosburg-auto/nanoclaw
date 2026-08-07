@@ -115,6 +115,7 @@ describe('groups config update --auto-compact-window', () => {
       packages_npm: '[]',
       additional_mounts: '[]',
       cli_scope: 'global',
+      timezone: null,
       auto_compact_window: 450000,
       updated_at: now(),
     });

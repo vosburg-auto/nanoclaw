@@ -32,16 +32,11 @@ export function createContainerConfig(config: ContainerConfigRow): void {
       `INSERT INTO container_configs (
         agent_group_id, provider, model, effort, image_tag, assistant_name,
         max_messages_per_prompt, skills, mcp_servers, packages_apt, packages_npm,
-        additional_mounts, cli_scope, timezone, updated_at
+        additional_mounts, cli_scope, timezone, auto_compact_window, updated_at
       ) VALUES (
         @agent_group_id, @provider, @model, @effort, @image_tag, @assistant_name,
         @max_messages_per_prompt, @skills, @mcp_servers, @packages_apt, @packages_npm,
-        @additional_mounts, @cli_scope, @timezone, @updated_at
-        additional_mounts, cli_scope, auto_compact_window, updated_at
-      ) VALUES (
-        @agent_group_id, @provider, @model, @effort, @image_tag, @assistant_name,
-        @max_messages_per_prompt, @skills, @mcp_servers, @packages_apt, @packages_npm,
-        @additional_mounts, @cli_scope, @auto_compact_window, @updated_at
+        @additional_mounts, @cli_scope, @timezone, @auto_compact_window, @updated_at
       )`,
     )
     .run(config);

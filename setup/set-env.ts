@@ -15,6 +15,7 @@ import fs from 'fs';
 import path from 'path';
 
 import { log } from '../src/log.js';
+import { writeSecretEnvFile } from './env-utils.js';
 import { emitStatus } from './status.js';
 
 /**
@@ -41,7 +42,7 @@ export function upsertEnvVar(key: string, value: string): { existed: boolean } {
     const sep = content && !content.endsWith('\n') ? '\n' : '';
     content = content + sep + newLine + '\n';
   }
-  fs.writeFileSync(envFile, content);
+  writeSecretEnvFile(envFile, content);
   return { existed };
 }
 

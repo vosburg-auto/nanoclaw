@@ -111,6 +111,14 @@ RUN --mount=type=cache,target=/root/.cache/pnpm \
 RUN printf '#!/bin/sh\nexec bun /app/src/cli/ncl.ts "$@"\n' > /usr/local/bin/ncl && \
     chmod +x /usr/local/bin/ncl
 
+# ---- Baked agent tooling (fork patch) ----------------------------------------
+# Consolidated from per-agent-group packages (formerly Agent Smith's container
+# config in v2.db, layered via buildAgentGroupImage) into the shared base image,
+# so no per-group image is needed. ffmpeg: report-TTS/media transcode; gh:
+# GitHub CLI; openssh-client: ssh to the Pi fleet; jq: JSON in skills/scripts.
+# Carry-forward note: this diverges from upstream — re-apply after upstream syncs.
+RUN apt-get update && apt-get install -y ffmpeg openssh-client gh jq && rm -rf /var/lib/apt/lists/*
+
 # ---- Entrypoint --------------------------------------------------------------
 COPY entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
