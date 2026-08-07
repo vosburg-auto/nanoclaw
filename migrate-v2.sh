@@ -541,7 +541,7 @@ if command -v docker >/dev/null 2>&1; then
     step_info "Building agent container image…"
   fi
   BUILD_LOG="$STEPS_DIR/3e-container-build.log"
-  # shellcheck disable=SC2086 -- BUILD_ARGS is one optional literal word.
+  # shellcheck disable=SC2086  # BUILD_ARGS is one optional literal word.
   if bash container/build.sh $BUILD_ARGS > "$BUILD_LOG" 2>&1; then
     step_ok "Container image ready"
     record_step "3e-build" "success"
