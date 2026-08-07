@@ -26,6 +26,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { loadConfig } from './config.js';
+import { forkProviderOptions } from './fork-provider-options.js';
 import { buildSystemPromptAddendum } from './destinations.js';
 import { getTaskSeriesId } from './db/session-routing.js';
 import { ensureMemoryScaffold } from './memory/scaffold.js';
@@ -97,15 +98,22 @@ async function main(): Promise<void> {
     log(`Additional MCP server: ${name} (${serverConfig.command})`);
   }
 
-  const provider = createProvider(providerName, {
-    assistantName: config.assistantName || undefined,
-    mcpServers,
-    env: { ...process.env },
-    additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
-    model: config.model,
-    effort: config.effort,
-    autoCompactWindow: config.autoCompactWindow,
-  });
+  // forkProviderOptions() is a typed identity: it makes `autoCompactWindow`
+  // mandatory here, so deleting the fork's pass-through is a compile error
+  // rather than a silent fallback to the provider default. See
+  // src/fork-provider-options.ts.
+  const provider = createProvider(
+    providerName,
+    forkProviderOptions({
+      assistantName: config.assistantName || undefined,
+      mcpServers,
+      env: { ...process.env },
+      additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
+      model: config.model,
+      effort: config.effort,
+      autoCompactWindow: config.autoCompactWindow,
+    }),
+  );
   provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
 
   await runPollLoop({

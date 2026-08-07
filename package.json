@@ -24,7 +24,10 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "fork:surface": "node scripts/fork-surface.mjs list",
+    "fork:check": "node scripts/fork-surface.mjs check",
+    "fork:liveness": "node scripts/fork-guard-liveness.mjs"
   },
   "dependencies": {
     "@chat-adapter/telegram": "4.29.0",

@@ -63,45 +63,54 @@ Source code changes (e.g. `src/types.ts`, `src/index.ts`) usually auto-merge cle
 
 ## Fork carry-forward registry (vosburg-auto)
 
-Every patch this fork carries on top of upstream, with the check that proves it survived. **A patch not in this table will be lost at some sync** — that is not a prediction, it is what happened to the webhook loopback bind and the CSPRNG approval ids during the v2.1.54 sync.
+Every patch this fork carries on top of upstream, and the command that goes red if it is reverted.
 
-### Deriving the surface mechanically — do this FIRST, every sync
+**There is no table here.** The first version of this section WAS a table, and it was stale on arrival — it omitted a patch added by the very commit that created it, and one of its checks could not fail. A hand-maintained list duplicating a mechanically derivable one is a second source of truth, and the second one is the one that rots. So:
 
-Do not enumerate fork patches by memory or by looking for fork-owned _files_. "Files in HEAD that never existed upstream" is structurally blind to patches applied to files that also exist upstream — the class that contains every hardening lost in v2.1.54. Instead, ask which **blobs** in the fork's tree appear nowhere in upstream's history:
+|                                        |                                                                    |
+| -------------------------------------- | ------------------------------------------------------------------ |
+| **Which paths are fork-modified**      | derived by `scripts/fork-surface.mjs` — the query is the authority |
+| **Intent, disposition, guard command** | `docs/fork-patches.json` — only what the query cannot know         |
+| **Do the two agree?**                  | `node scripts/fork-surface.mjs check` — fails in BOTH directions   |
+| **Does each guard actually work?**     | `node scripts/fork-guard-liveness.mjs`                             |
+
+Both checks run in CI on every PR.
+
+### The derivation
+
+A path is fork-modified iff its blob appears in **no** commit reachable from any `upstream/*` ref. Content-addressing makes this exact, and it catches fork edits inside files that also exist upstream — the class that "files that never existed upstream" is blind to, and the class that contained every hardening the v2.1.54 sync silently dropped.
 
 ```bash
 git fetch upstream --prune
-git rev-list --objects --remotes=upstream | awk '{print $1}' | sort -u > /tmp/upstream_blobs
-git ls-tree -r origin/main --format='%(objectname) %(path)' \
-  | awk 'NR==FNR{u[$1];next} !($1 in u){print $2}' /tmp/upstream_blobs - \
-  | sort
+node scripts/fork-surface.mjs list      # the fork surface at HEAD
+node scripts/fork-surface.mjs check     # ...and whether the manifest agrees
 ```
 
-Note `--remotes=upstream` with **no** `--all`: adding `--all` pulls in the fork's own refs and the query silently returns nothing.
+`fork-surface.mjs check` fails if the query finds a path the manifest does not disposition, **and** if the manifest claims a patch whose content now matches upstream. The second direction is what catches a silent revert: a carried patch whose blob has gone back to upstream's is either lost or upstreamed, and you must say which.
 
-Every path it prints is fork-modified content. Reconcile that list against the table below item by item, and for anything you intend to drop, state "superseded upstream" with the reason. After the sync, re-run it against the sync branch: a path that was fork-modified before and now matches an upstream blob exactly has been **reverted**, not merged.
+### At every sync
 
-### The registry
+1. `node scripts/fork-surface.mjs check --ref origin/main` — snapshot the surface before you start.
+2. Take upstream's tree and re-apply.
+3. `node scripts/fork-surface.mjs check` — every path it complains about is either a patch you dropped or one you need to disposition. Neither is optional.
+4. `node scripts/fork-guard-liveness.mjs` — proves the guards still bite.
+5. Record the upstream anchor (below) so the next sync has a merge base.
 
-| Patch                                  | Intent                                                                                                    | Resolution                                                                                                                                      | Post-sync check                                                      |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `bin/ncl` runner resolution            | CLI must work on hosts with deps installed but no pnpm on PATH (ss-smith-vm)                              | **Keep the fork's block.** Upstream's launcher ends at `exec pnpm exec tsx …`                                                                   | `pnpm exec vitest run src/cli/ncl-launcher.test.ts`                  |
-| `src/webhook-server.ts` loopback bind  | Don't expose the webhook port to the LAN; `WEBHOOK_BIND` is the opt-in                                    | Re-apply `DEFAULT_BIND` + `resolveListenConfig` on top of upstream's file                                                                       | `pnpm exec vitest run src/webhook-server.bind.test.ts`               |
-| `src/modules/approvals/approval-id.ts` | Approval ids are capabilities; 128-bit CSPRNG, not `Math.random()`                                        | Fork-owned file; both call sites import it. Keep the `ap`/`oa` prefixes — longer ones bust Telegram's 64-byte `callback_data` budget            | `pnpm exec vitest run src/modules/approvals/approval-id.test.ts`     |
-| `.env` 0600 hardening                  | `.env` holds bot tokens; upstream rewrites these steps to bare `writeFileSync`                            | Rewire `setup/set-env.ts` + `setup/timezone.ts` through `writeSecretEnvFile`                                                                    | `pnpm exec vitest run setup/env-utils.test.ts`                       |
-| `container/Dockerfile` agent tooling   | Baked `ffmpeg`, `gh`, `openssh-client`, `jq` for report-TTS, GitHub CLI, the Pi fleet, and JSON in skills | Re-add the fork's `RUN apt-get …` layer before `# ---- Entrypoint`                                                                              | `grep -q 'openssh-client' container/Dockerfile`                      |
-| `NANOCLAW_HOST_GATEWAY_IP`             | nanoclaw runs on a different box than the services containers reach as "the host"                         | Keep `hostGatewayArgs()` in `src/container-runtime.ts`                                                                                          | `pnpm exec vitest run src/container-runtime.host-gateway.test.ts`    |
-| `TELEGRAM_ALLOWED_UPDATES`             | `callback_query` carries OneCLI approval clicks; `message_reaction` carries 👍/👎                         | Re-apply the `longPolling.allowedUpdates` hunk in `src/channels/telegram.ts`                                                                    | `pnpm exec vitest run src/channels/telegram-allowed-updates.test.ts` |
-| `fork-auto-compact-window` migration   | Per-group auto-compact threshold                                                                          | Keep `name: 'auto-compact-window'` — it is the `schema_version` key. The `fork-` filename + version 900 keep it out of upstream's numeric range | `pnpm exec vitest run src/db/db-v2.test.ts`                          |
-| `@chat-adapter/telegram` dependency    | Upstream keeps telegram on its `channels` branch, not `main`                                              | Re-add at the exact pin upstream's `channels` branch requires                                                                                   | `pnpm exec vitest run src/channels/telegram-registration.test.ts`    |
-| ShellCheck annotations                 | Four upstream shell files fail `shellcheck -S error`; upstream runs no ShellCheck                         | Comment-only re-apply                                                                                                                           | `shellcheck -S error $(git ls-files '*.sh')`                         |
-| `.gitignore` entries                   | Fork-local ignores                                                                                        | Combine, don't replace                                                                                                                          | —                                                                    |
+### Recording the upstream anchor
+
+Each sync so far has taken upstream's tree wholesale without recording ancestry, so `git merge-base` still resolves to a v2.0.64-era commit and every sync reproduces the same phantom-conflict storm. After the sync branch is final, append an ancestry-only commit:
+
+```bash
+git merge -s ours upstream/main -m "chore: record upstream v<version> as an ancestor (tree unchanged)"
+```
+
+`-s ours` keeps our tree byte-for-byte and records upstream as a second parent. It is honest here **only because** the sync genuinely took upstream's tree — verify with `git diff --stat upstream/main HEAD` showing additions but no deletions of upstream content before running it. It is an append, so the `no-force-push-any-branch` ruleset does not block it. **The PR must then land via "Create a merge commit"** — a squash merge discards the second parent and the next sync inherits the same stale base.
 
 ### Two rules the v2.1.54 sync bought the hard way
 
-1. **Fork tests go in fork-owned filenames.** `src/webhook-server.test.ts` held the six assertions guarding the loopback bind. Upstream owns that filename; taking upstream's copy deleted the feature and its detector in one commit, and CI stayed green. Hence `webhook-server.bind.test.ts`, `container-runtime.host-gateway.test.ts`, `telegram-allowed-updates.test.ts`, `approval-id.test.ts`.
+1. **Fork tests go in fork-owned filenames.** `src/webhook-server.test.ts` held the six assertions guarding the loopback bind. Upstream owns that filename; taking upstream's copy deleted the feature and its detector in one commit, and CI stayed green.
 
-2. **A guard that cannot fail is not a guard.** The approval-id test asserted the id matched `[A-Za-z0-9_-]+`. Base36 is a subset of base64url, so it passed against the reverted `Math.random()` implementation. Assert the property that actually distinguishes the two — here, decoded byte length.
+2. **A guard that cannot fail is not a guard.** The approval-id test asserted the id matched `[A-Za-z0-9_-]+`. Base36 is a subset of base64url, so it passed against the reverted `Math.random()` implementation. `fork-guard-liveness.mjs` exists so this is decided mechanically rather than by care: it reverts each patch and requires the guard to go red.
 
 ## When to merge forward
 

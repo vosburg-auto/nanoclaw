@@ -80,6 +80,10 @@ export interface ProviderOptions {
    * Context auto-compact threshold in tokens. Providers that support it
    * (Claude) use this to raise or lower when conversation history is
    * compacted. If omitted, the provider's built-in default applies.
+   *
+   * Fork patch (vosburg-auto). The pass-through that fills this from
+   * container.json is guarded at compile time — see
+   * `src/fork-provider-options.ts`. See docs/fork-patches.json.
    */
   autoCompactWindow?: number;
 }
