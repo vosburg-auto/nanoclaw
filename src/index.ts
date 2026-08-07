@@ -72,7 +72,13 @@ async function main(): Promise<void> {
   // The operator then stamps the marker, and the first CORRECT boot sleeps up
   // to 900s logging "delaying startup due to repeated crashes". Refusing before
   // the counter advances keeps the breaker measuring actual crashes.
-  enforceUpgradeTripwire();
+  //
+  // The cost of that ordering is that the breaker's backoff can no longer
+  // throttle a persistently-tripped tripwire, so the tripwire carries its own
+  // fixed exit delay instead (TRIPWIRE_EXIT_DELAY_MS). Don't "simplify" this by
+  // moving the call back below the breaker — that trades one restart-loop
+  // problem for the crash-count inflation described above.
+  await enforceUpgradeTripwire();
 
   // 0.5 Circuit breaker — backoff on rapid restarts
   await enforceStartupBackoff();

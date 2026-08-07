@@ -8,6 +8,8 @@ NanoClaw records the version it reached each time you upgrade through a supporte
 
 At startup the host checks that record against the running code. If it's **missing** or its version **doesn't match** the code, the host stops. This almost always means the code was updated by a raw `git pull` instead of the supported flow — so migrations, dependency installs, or container rebuilds that the flow would have run may not have happened.
 
+**Why it pauses before quitting.** After printing the message the host waits ~30 seconds, then exits non-zero. That is deliberate: if NanoClaw is under a supervisor that restarts it (systemd `Restart=always`, a container restart policy), an install that stays tripped would otherwise respawn every few seconds and flood the log. The pause makes a stuck install restart at a readable pace. It does not delay a healthy start, and `systemctl stop` still takes effect during the wait.
+
 ## If you just ran a supported upgrade
 
 If you reached this point by running `/update-nanoclaw`, `/migrate-nanoclaw`, or `/setup` and it **completed successfully**, this is expected the first time an existing install meets the tripwire (your previous version predated it). Clear it by stamping the current version:
