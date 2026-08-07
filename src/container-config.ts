@@ -45,6 +45,8 @@ export interface ContainerConfig {
   model?: string;
   effort?: string;
   timezone?: string;
+  /** Claude Code auto-compact threshold (tokens). Unset = provider default. */
+  autoCompactWindow?: number;
 }
 
 /**
@@ -77,6 +79,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
     timezone: row.timezone && isValidTimezone(row.timezone) ? row.timezone : undefined,
+    autoCompactWindow: row.auto_compact_window ?? undefined,
   };
 }
 

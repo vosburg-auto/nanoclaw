@@ -26,6 +26,7 @@ export interface ContainerConfigRow {
   additional_mounts: string; // JSON: AdditionalMountConfig[]
   cli_scope: string; // 'disabled' | 'group' | 'global'
   timezone: string | null; // IANA id; NULL = follow the install-global timezone
+  auto_compact_window: number | null; // Claude Code auto-compact threshold (tokens); NULL = provider default
   updated_at: string;
 }
 
