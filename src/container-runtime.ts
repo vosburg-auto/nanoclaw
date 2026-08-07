@@ -13,14 +13,6 @@ export const CONTAINER_RUNTIME_BIN = 'docker';
 
 /** CLI args needed for the container to resolve the host gateway. */
 export function hostGatewayArgs(): string[] {
-  // NANOCLAW_HOST_GATEWAY_IP: point host.docker.internal at a REMOTE host
-  // instead of this machine — for installs where the services containers
-  // expect on "the host" (credential proxy, notify endpoints) live on
-  // another box, e.g. nanoclaw relocated off the OneCLI-gateway machine.
-  const override = process.env.NANOCLAW_HOST_GATEWAY_IP;
-  if (override) {
-    return [`--add-host=host.docker.internal:${override}`];
-  }
   // On Linux, host.docker.internal isn't built-in — add it explicitly
   if (os.platform() === 'linux') {
     return ['--add-host=host.docker.internal:host-gateway'];

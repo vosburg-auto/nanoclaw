@@ -5,7 +5,10 @@
  *   1. Module-initiated actions — the module called `requestApproval()` with
  *      some free-form `action` string and registered a handler via
  *      `registerApprovalHandler(action, handler)`. On approve, we look up the
- *      handler and call it; on reject, we notify the agent and move on.
+ *      handler and call it; on plain reject we relay a decline to the agent; on
+ *      "Reject with reason…" we hold the row and capture the admin's next DM as
+ *      a one-line reason (see reason-capture.ts). Reject finalization is shared
+ *      via finalizeReject.
  *   2. OneCLI credential approvals (`action = 'onecli_credential'`). Resolved
  *      via an in-memory Promise — see onecli-approvals.ts.
  *
@@ -17,52 +20,45 @@ import { deletePendingApproval, getPendingApproval, getSession } from '../../db/
 import type { ResponsePayload } from '../../response-registry.js';
 import { log } from '../../log.js';
 import { writeSessionMessage } from '../../session-manager.js';
-import type { PendingApproval, Session } from '../../types.js';
+import type { PendingApproval } from '../../types.js';
+import { hasAdminPrivilege, isGlobalAdmin, isOwner } from '../permissions/db/user-roles.js';
+import { finalizeReject } from './finalize.js';
 import { ONECLI_ACTION, resolveOneCLIApproval } from './onecli-approvals.js';
-import { getApprovalHandler, pickApprover } from './primitive.js';
+import { getApprovalHandler, notifyApprovalResolved, REJECT_WITH_REASON_VALUE } from './primitive.js';
+import { armReasonCapture } from './reason-capture.js';
 
 export async function handleApprovalsResponse(payload: ResponsePayload): Promise<boolean> {
-  // OneCLI credential approvals — resolved via in-memory Promise first.
-  if (resolveOneCLIApproval(payload.questionId, payload.value)) {
-    return true;
-  }
-
-  // DB-backed pending_approvals.
   const approval = getPendingApproval(payload.questionId);
   if (!approval) return false;
 
+  if (!isAuthorizedApprovalClick(approval, payload)) {
+    log.warn('Ignoring unauthorized approval response', {
+      approvalId: approval.approval_id,
+      action: approval.action,
+      userId: payload.userId,
+      channelType: payload.channelType,
+    });
+    return true;
+  }
+
   if (approval.action === ONECLI_ACTION) {
+    if (resolveOneCLIApproval(payload.questionId, payload.value)) {
+      return true;
+    }
     // Row exists but the in-memory resolver is gone (timer fired or the process
     // was in a weird state). Nothing to do — just drop the row.
     deletePendingApproval(payload.questionId);
     return true;
   }
 
-  // payload.userId is the raw platform user id (e.g. "8550182903"); namespace
-  // it with the channel type so it matches users(id) format and can be checked
-  // against pickApprover. Mirror handleSenderApprovalResponse in permissions/.
-  const clickerId = payload.userId ? `${payload.channelType}:${payload.userId}` : null;
-  await handleRegisteredApproval(approval, payload.value, clickerId);
+  await handleRegisteredApproval(approval, payload.value, namespacedUserId(payload) ?? '');
   return true;
-}
-
-/**
- * Verify the clicker is in the eligible-approvers list for this approval's
- * agent group. Without this check, any forged click — including one that
- * spoofs another user's id via `payload.userId` — would dispatch the
- * approval handler. The webhook receiver itself does not authenticate
- * clicks beyond platform-signature checks, so we re-verify here so an
- * approved cards can't be redeemed by a non-admin.
- */
-function isAuthorizedClicker(clickerId: string | null, session: Session): boolean {
-  if (!clickerId) return false;
-  return pickApprover(session.agent_group_id).includes(clickerId);
 }
 
 async function handleRegisteredApproval(
   approval: PendingApproval,
   selectedOption: string,
-  clickerId: string | null,
+  userId: string,
 ): Promise<void> {
   if (!approval.session_id) {
     deletePendingApproval(approval.approval_id);
@@ -74,22 +70,21 @@ async function handleRegisteredApproval(
     return;
   }
 
-  if (!isAuthorizedClicker(clickerId, session)) {
-    // Claim the response so the dispatcher doesn't keep retrying, but do
-    // nothing else. Leave the pending_approvals row in place — a real
-    // approver can still click and resolve it.
-    // Log only enough to triage; do NOT dump the eligible-approver list
-    // (would let a persistent forged-click attacker enumerate admin/owner
-    // identities by scraping logs).
-    log.warn('Approval click rejected — clicker is not an eligible approver', {
-      approvalId: approval.approval_id,
-      action: approval.action,
-      clickerId,
-    });
+  // "Reject with reason…" — hold the row and capture the admin's next DM
+  // instead of finalizing now. The agent is notified exactly once: after the
+  // reason arrives, or after the sweep's timeout if the admin ghosts.
+  if (selectedOption === REJECT_WITH_REASON_VALUE) {
+    await armReasonCapture(approval, session, userId);
     return;
   }
-  const userId = clickerId as string; // narrowed by isAuthorizedClicker
 
+  // Plain Reject (or any other non-approve value) — instant fast path.
+  if (selectedOption !== 'approve') {
+    await finalizeReject(approval, session, userId);
+    return;
+  }
+
+  // Approved — dispatch to the module that registered for this action.
   const notify = (text: string): void => {
     writeSessionMessage(session.agent_group_id, session.id, {
       id: `appr-note-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -102,15 +97,6 @@ async function handleRegisteredApproval(
     });
   };
 
-  if (selectedOption !== 'approve') {
-    notify(`Your ${approval.action} request was rejected by admin.`);
-    log.info('Approval rejected', { approvalId: approval.approval_id, action: approval.action, userId });
-    deletePendingApproval(approval.approval_id);
-    await wakeContainer(session);
-    return;
-  }
-
-  // Approved — dispatch to the module that registered for this action.
   const handler = getApprovalHandler(approval.action);
   if (!handler) {
     log.warn('No approval handler registered — row dropped', {
@@ -119,13 +105,14 @@ async function handleRegisteredApproval(
     });
     notify(`Your ${approval.action} was approved, but no handler is installed to apply it.`);
     deletePendingApproval(approval.approval_id);
+    await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
     await wakeContainer(session);
     return;
   }
 
   const payload = JSON.parse(approval.payload);
   try {
-    await handler({ session, payload, userId, notify });
+    await handler({ session, payload, approval, userId, notify });
     log.info('Approval handled', { approvalId: approval.approval_id, action: approval.action, userId });
   } catch (err) {
     log.error('Approval handler threw', { approvalId: approval.approval_id, action: approval.action, err });
@@ -135,5 +122,30 @@ async function handleRegisteredApproval(
   }
 
   deletePendingApproval(approval.approval_id);
+  await notifyApprovalResolved({ approval, session, outcome: 'approve', userId });
   await wakeContainer(session);
+}
+
+function namespacedUserId(payload: ResponsePayload): string | null {
+  if (!payload.userId) return null;
+  return payload.userId.includes(':') ? payload.userId : `${payload.channelType}:${payload.userId}`;
+}
+
+function isAuthorizedApprovalClick(approval: PendingApproval, payload: ResponsePayload): boolean {
+  const userId = namespacedUserId(payload);
+  if (!userId) return false;
+
+  // An approval may name a specific approver; only that exact user may resolve it.
+  if (approval.approver_user_id) {
+    return userId === approval.approver_user_id;
+  }
+
+  const agentGroupId =
+    approval.agent_group_id ?? (approval.session_id ? getSession(approval.session_id)?.agent_group_id : null);
+
+  if (!agentGroupId) {
+    return isOwner(userId) || isGlobalAdmin(userId);
+  }
+
+  return hasAdminPrivilege(userId, agentGroupId);
 }
