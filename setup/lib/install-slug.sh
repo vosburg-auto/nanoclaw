@@ -10,6 +10,10 @@
 # Slug is sha1(PROJECT_ROOT)[:8] — must match the TS helper exactly so both
 # halves of setup name things consistently.
 
+# Sourced, never executed, so it carries no shebang; the directive below names
+# the dialect instead. It really is bash, not sh: `local` is a bashism.
+# shellcheck shell=bash
+
 _nanoclaw_install_slug() {
   local root="${NANOCLAW_PROJECT_ROOT:-${PROJECT_ROOT:-$PWD}}"
   if command -v shasum >/dev/null 2>&1; then
