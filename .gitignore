@@ -46,3 +46,10 @@ AGENTS.md
 docs/maintainer-guide.md
 docs/drafts/
 forks.md
+
+# Fork-local: internal working docs and agent scratch, never committed
+.agents
+AGENTS.md
+docs/maintainer-guide.md
+docs/drafts/
+forks.md

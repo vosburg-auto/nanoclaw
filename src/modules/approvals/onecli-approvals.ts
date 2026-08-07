@@ -62,7 +62,7 @@ let adapterRef: ChannelDeliveryAdapter | null = null;
  * map, DB row, and button callback all use this short id; click handling
  * looks up the short id and resolves the Promise that was waiting on it.
  */
-function shortApprovalId(): string {
+export function shortApprovalId(): string {
   return `oa-${Math.random().toString(36).slice(2, 10)}`;
 }
 
