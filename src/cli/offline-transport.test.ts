@@ -334,3 +334,21 @@ describe('client.ts closes the transport on every exit path', () => {
     expect(guarded).toMatch(/transport\.close\?\.\(\)/);
   });
 });
+
+describe('assertPrivateDb stats once', () => {
+  // NOTE: there is deliberately no test that assertPrivateDb stats exactly ONCE.
+  // Two attempts to write one were inert — vi.spyOn(fs, 'statSync') does not
+  // intercept the call inside the module under test here (node built-ins are not
+  // reliably shared across the boundary in this setup), so the test passed with
+  // the double-stat restored. Rather than ship a check that cannot fail, the
+  // single-stat property is stated in the function's own comment and verified by
+  // reading. A test that reports coverage it does not provide is worse than none.
+
+  it('names the per-risk override, not the combined one', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-toctou-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    expect(() => assertPrivateDb(db)).toThrow(/NANOCLAW_OFFLINE_FORCE_PERMS/);
+  });
+});

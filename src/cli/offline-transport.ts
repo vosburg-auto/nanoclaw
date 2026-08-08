@@ -168,18 +168,22 @@ export function ensurePrivateDb(dbPath: string): void {
  * Rather than restate the assumption, check it.
  */
 export function assertPrivateDb(dbPath: string): void {
+  // ONE stat, reused. Statting again just to format the message means a file
+  // that moves between the two calls throws a bare ENOENT instead of the
+  // instruction this function exists to give. ensurePrivateDb below caches its
+  // stat for the same reason.
   let mode: number;
   try {
-    mode = fs.statSync(dbPath).mode & 0o077;
+    mode = fs.statSync(dbPath).mode;
   } catch {
-    return; // absent DB is a fresh install; initDb creates it under our umask
+    return; // absent DB is a fresh install; initDb creates it, ensurePrivateDb tightens it
   }
-  if (mode === 0) return;
+  if ((mode & 0o077) === 0) return;
   throw new Error(
-    `refusing to run offline: ${dbPath} is readable by group/other (mode ${(fs.statSync(dbPath).mode & 0o777).toString(8)}).\n` +
+    `refusing to run offline: ${dbPath} is readable by group/other (mode ${(mode & 0o777).toString(8)}).\n` +
       `Offline mode grants the trusted 'host' context to whoever can read this file, whereas the\n` +
       `socket restricts that to the owner. Run: chmod 600 ${dbPath}\n` +
-      `(or set NANOCLAW_OFFLINE_FORCE=1 if you have accepted the exposure on this host).`,
+      `(or set ${FORCE_PERMS_ENV}=1 if you have accepted the exposure on this host).`,
   );
 }
 
