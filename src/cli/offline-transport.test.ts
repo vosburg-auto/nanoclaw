@@ -1,0 +1,354 @@
+/**
+ * Fork patch guard (vosburg-auto) for offline `ncl`.
+ *
+ * Fork-owned FILENAME on purpose: `src/cli/client.test.ts` is a name upstream
+ * also owns, and the v2.1.54 sync proved that a wholesale take of such a file
+ * deletes the feature and its detector in one commit with CI green.
+ *
+ * What has to go red if the patch is reverted:
+ *   1. `pickTransport()` stops honoring NANOCLAW_OFFLINE  → the deadlock returns
+ *   2. the transport stops dispatching as a HOST caller   → operator commands
+ *      that carry `access: 'approval'` would hang forever with nobody to ask
+ *   3. the transport starts migrating by default          → it would move the
+ *      schema out from under a snapshot the operator has not taken yet
+ */
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import {
+  OFFLINE_ENV,
+  assertHostNotRunning,
+  assertPrivateDb,
+  ensurePrivateDb,
+  envFlag,
+  forced,
+  offlineRequested,
+} from './offline-transport.js';
+
+// vi.mock factories are hoisted above every top-level const, so the shared
+// recorders come from vi.hoisted and DATA_DIR is a literal.
+const TEST_DIR = '/tmp/nanoclaw-offline-transport-test';
+
+const rec = vi.hoisted(() => ({
+  dispatchCalls: [] as Array<{ command: string; caller: string }>,
+  migrateCalls: [] as string[],
+}));
+
+vi.mock('../config.js', async () => {
+  const actual = await vi.importActual<typeof import('../config.js')>('../config.js');
+  return { ...actual, DATA_DIR: '/tmp/nanoclaw-offline-transport-test' };
+});
+
+vi.mock('./dispatch.js', () => ({
+  dispatch: vi.fn(async (req: { id: string; command: string }, ctx: { caller: string }) => {
+    rec.dispatchCalls.push({ command: req.command, caller: ctx.caller });
+    return { id: req.id, ok: true, data: {} };
+  }),
+}));
+
+vi.mock('../db/migrations/index.js', () => ({
+  runMigrations: vi.fn(() => {
+    rec.migrateCalls.push('ran');
+  }),
+}));
+
+const { dispatchCalls, migrateCalls } = rec;
+
+beforeEach(() => {
+  dispatchCalls.length = 0;
+  migrateCalls.length = 0;
+  fs.mkdirSync(TEST_DIR, { recursive: true });
+});
+
+afterEach(() => {
+  fs.rmSync(TEST_DIR, { recursive: true, force: true });
+});
+
+describe('offlineRequested', () => {
+  it('is off by default and opt-in by env', () => {
+    expect(offlineRequested({})).toBe(false);
+    expect(offlineRequested({ [OFFLINE_ENV]: '1' })).toBe(true);
+    expect(offlineRequested({ [OFFLINE_ENV]: 'yes' })).toBe(true);
+  });
+
+  it('treats empty and "0" as OFF, not as "the variable is present"', () => {
+    // `NANOCLAW_OFFLINE=` in a sourced .env is the shape that would otherwise
+    // silently route every operator command away from the running host.
+    expect(offlineRequested({ [OFFLINE_ENV]: '' })).toBe(false);
+    expect(offlineRequested({ [OFFLINE_ENV]: '0' })).toBe(false);
+  });
+});
+
+describe('OfflineTransport', () => {
+  it('dispatches in-process as a HOST caller', async () => {
+    const { OfflineTransport } = await import('./offline-transport.js');
+    const t = new OfflineTransport({ dbPath: path.join(TEST_DIR, 'v2.db') });
+    const res = await t.sendFrame({ id: 'r1', command: 'groups-list', args: {} });
+    t.close();
+
+    expect(res.ok).toBe(true);
+    expect(dispatchCalls).toEqual([{ command: 'groups-list', caller: 'host' }]);
+  });
+
+  it('does NOT migrate unless asked — the operator snapshots before any schema change', async () => {
+    const { OfflineTransport } = await import('./offline-transport.js');
+    const t = new OfflineTransport({ dbPath: path.join(TEST_DIR, 'v2.db') });
+    await t.sendFrame({ id: 'r1', command: 'groups-list', args: {} });
+    t.close();
+    expect(migrateCalls).toEqual([]);
+
+    const m = new OfflineTransport({ dbPath: path.join(TEST_DIR, 'v2b.db'), migrate: true });
+    await m.sendFrame({ id: 'r2', command: 'groups-list', args: {} });
+    m.close();
+    expect(migrateCalls).toEqual(['ran']);
+  });
+
+  it('opens the DB once across multiple frames', async () => {
+    const { OfflineTransport } = await import('./offline-transport.js');
+    const t = new OfflineTransport({ dbPath: path.join(TEST_DIR, 'v2.db'), migrate: true });
+    await t.sendFrame({ id: 'r1', command: 'groups-list', args: {} });
+    await t.sendFrame({ id: 'r2', command: 'groups-list', args: {} });
+    t.close();
+    expect(migrateCalls).toEqual(['ran']);
+    expect(dispatchCalls).toHaveLength(2);
+  });
+});
+
+describe('the client seam', () => {
+  it('client.ts routes through the offline transport when the env var is set', () => {
+    // Source-level assertion, because src/cli/client.ts self-executes main() on
+    // import and cannot be imported into a test. This is what goes red when a
+    // wholesale upstream take of client.ts drops the seam: the runtime effect
+    // hangs entirely on that one branch, and nothing else in this file can see
+    // it.
+    const src = fs.readFileSync(path.join(__dirname, 'client.ts'), 'utf8');
+    const pick = src.slice(src.indexOf('function pickTransport'));
+    const body = pick.slice(0, pick.indexOf('\n}'));
+    expect(body).toMatch(/offlineRequested\(\)/);
+    expect(body).toMatch(/OfflineTransport/);
+    // The offline branch must precede the socket default, or it can never be
+    // reached. (toBeLessThan takes no message argument in this vitest version.)
+    expect(body.indexOf('OfflineTransport') < body.indexOf('SocketTransport')).toBe(true);
+  });
+});
+
+// --- request parsing and precondition guards --------------------------------
+
+describe('offline-mode request parsing and guards', () => {
+  it('treats explicit negatives as OFF, not as "any non-empty string is on"', () => {
+    for (const v of ['false', 'FALSE', 'no', 'off', '0', '', '  ']) {
+      expect(offlineRequested({ NANOCLAW_OFFLINE: v }), `NANOCLAW_OFFLINE=${v}`).toBe(false);
+    }
+    for (const v of ['1', 'true', 'yes', 'anything']) {
+      expect(offlineRequested({ NANOCLAW_OFFLINE: v }), `NANOCLAW_OFFLINE=${v}`).toBe(true);
+    }
+    expect(offlineRequested({})).toBe(false);
+  });
+
+  it('refuses to run while the host socket exists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-guard-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    expect(() => assertHostNotRunning({}, dir)).toThrow(/host appears to be running/);
+  });
+
+  it('allows the run when no socket is present', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-guard-'));
+    expect(() => assertHostNotRunning({}, dir)).not.toThrow();
+  });
+
+  it('the force override exists, because a stale socket must not trap the operator', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-guard-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE: '1' }, dir)).not.toThrow();
+  });
+
+  it('refuses a group/world-readable database', () => {
+    // The live install really is 0644 while the socket is 0600 — the premise
+    // the original header comment asserted without checking.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-perm-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    expect(() => assertPrivateDb(db)).toThrow(/readable by group\/other/);
+  });
+
+  it('accepts a 0600 database', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-perm-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o600);
+    expect(() => assertPrivateDb(db)).not.toThrow();
+  });
+
+  it('treats an absent database as a fresh install, not a failure', () => {
+    expect(() => assertPrivateDb('/nonexistent/nope/v2.db')).not.toThrow();
+  });
+});
+
+describe('offline-mode preconditions', () => {
+  it('a fresh database is chmod 600, not left to the umask', () => {
+    // assertPrivateDb skips a DB that does not exist yet and initDb never
+    // chmods, so under a 022 umask the file landed 0644 — the exact mode the
+    // guard rejects, on a file we created ourselves.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-fresh-'));
+    const db = path.join(dir, 'v2.db');
+    const saved = process.umask(0o022);
+    try {
+      fs.writeFileSync(db, '');
+      expect(fs.statSync(db).mode & 0o077).not.toBe(0);
+      ensurePrivateDb(db);
+      expect(fs.statSync(db).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(saved);
+    }
+  });
+
+  it('ensurePrivateDb leaves an already-private database alone and tolerates an absent one', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-fresh-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o600);
+    ensurePrivateDb(db);
+    expect(fs.statSync(db).mode & 0o777).toBe(0o600);
+    expect(() => ensurePrivateDb(path.join(dir, 'nope.db'))).not.toThrow();
+  });
+
+  it('the liveness override no longer waives the permissions check too', () => {
+    // One variable waiving two unrelated risks meant an operator clearing a
+    // stale socket silently also accepted a world-readable database.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-split-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE_LIVENESS: '1' }, dir)).not.toThrow();
+
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    // The permissions guard is a separate decision and must still refuse.
+    expect(() => assertPrivateDb(db)).toThrow(/readable by group\/other/);
+  });
+
+  it('the legacy combined override still works, and warns that it waives both', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-legacy-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE: '1' }, dir)).not.toThrow();
+      expect(err).toHaveBeenCalled();
+      expect(String(err.mock.calls[0][0])).toMatch(/waives BOTH/);
+    } finally {
+      err.mockRestore();
+    }
+  });
+});
+
+describe('one env parser, one force decision, loud chmod failure', () => {
+  it('the FORCE flags honour explicit negatives, exactly like NANOCLAW_OFFLINE', () => {
+    // The bug: forced() used `!== ''`, so FORCE_LIVENESS=0 waived the check it
+    // names — the same truthiness bug offlineRequested() documents and rejects,
+    // rewritten ten lines below it in the same PR.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-neg-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    for (const v of ['0', 'false', 'no', 'off', '']) {
+      expect(
+        () => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE_LIVENESS: v }, dir),
+        `FORCE_LIVENESS=${v} must NOT waive the check`,
+      ).toThrow(/host appears to be running/);
+    }
+    expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE_LIVENESS: '1' }, dir)).not.toThrow();
+  });
+
+  it('envFlag is the single truthiness rule both switches read through', () => {
+    for (const v of ['0', 'false', 'FALSE', 'no', 'off', '', '   ']) {
+      expect(envFlag({ X: v }, 'X'), `X=${v}`).toBe(false);
+    }
+    for (const v of ['1', 'true', 'yes', 'whatever']) expect(envFlag({ X: v }, 'X'), `X=${v}`).toBe(true);
+    expect(envFlag({}, 'X')).toBe(false);
+  });
+
+  it('forced() is exported so both entry points share one decision', () => {
+    expect(typeof forced).toBe('function');
+    expect(forced({ NANOCLAW_OFFLINE_FORCE_PERMS: '1' }, 'NANOCLAW_OFFLINE_FORCE_PERMS')).toBe(true);
+    expect(forced({ NANOCLAW_OFFLINE_FORCE_PERMS: 'false' }, 'NANOCLAW_OFFLINE_FORCE_PERMS')).toBe(false);
+  });
+
+  it('a failed chmod THROWS instead of silently leaving the DB readable', () => {
+    // One catch covered both "file absent" (fine) and "chmod failed" (not fine),
+    // so a fresh DB could stay world-readable with no warning at all.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-chmod-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    const spy = vi.spyOn(fs, 'chmodSync').mockImplementation(() => {
+      throw new Error('EPERM: operation not permitted');
+    });
+    try {
+      expect(() => ensurePrivateDb(db)).toThrow(/could not make .* private/);
+      expect(() => ensurePrivateDb(db)).toThrow(/chmod 600/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('an absent file is still silently fine — that case was never the problem', () => {
+    expect(() => ensurePrivateDb('/nonexistent/nope/v2.db')).not.toThrow();
+  });
+});
+
+describe('client.ts closes the transport on every exit path', () => {
+  // client.ts self-executes main() on import, so it cannot be unit-imported.
+  // A source-level assertion is the honest option here, and it is what stops a
+  // silent revert of any of the three close sites: the sendFrame catch, the
+  // formatResponse catch, and the success-path drain callback.
+  const src = fs.readFileSync(new URL('./client.ts', import.meta.url), 'utf8');
+
+  it('has a close call on all three exit paths', () => {
+    expect(src.match(/transport\.close\?\.\(\)/g) ?? [], 'expected 3 close sites').toHaveLength(3);
+  });
+
+  it('closes before every process.exit inside main(), after the transport exists', () => {
+    // Scoped to main()'s BODY on purpose. Two earlier versions of this test were
+    // wrong in ways worth recording: the first split on raw text and matched a
+    // process.exit() mentioned in a COMMENT; the second assumed textual position
+    // implied execution order and flagged parseArgv's exit (which runs before any
+    // transport exists) and the top-level catch (where none is in scope).
+    const code = src.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const start = code.indexOf('const transport');
+    const end = code.indexOf('function pickTransport');
+    expect(start, 'precondition: transport is constructed in main()').toBeGreaterThan(0);
+    expect(end, 'precondition: main() ends before pickTransport').toBeGreaterThan(start);
+
+    const mainBody = code.slice(start, end);
+    const segments = mainBody.split(/process\.exit\(/).slice(0, -1);
+    expect(segments.length, 'expected the three guarded exit paths').toBe(3);
+    for (const seg of segments) {
+      expect(seg, `an exit path with no close():\n...${seg.slice(-220)}`).toMatch(/transport\.close\?\.\(\)/);
+    }
+  });
+
+  it('formatResponse runs inside a guarded region, not outside it', () => {
+    const guarded = src.slice(src.indexOf('let output'), src.indexOf('process.stdout.write(output'));
+    expect(guarded).toMatch(/try\s*\{/);
+    expect(guarded).toMatch(/formatResponse\(/);
+    expect(guarded).toMatch(/transport\.close\?\.\(\)/);
+  });
+});
+
+describe('assertPrivateDb stats once', () => {
+  // NOTE: there is deliberately no test that assertPrivateDb stats exactly ONCE.
+  // Two attempts to write one were inert — vi.spyOn(fs, 'statSync') does not
+  // intercept the call inside the module under test here (node built-ins are not
+  // reliably shared across the boundary in this setup), so the test passed with
+  // the double-stat restored. Rather than ship a check that cannot fail, the
+  // single-stat property is stated in the function's own comment and verified by
+  // reading. A test that reports coverage it does not provide is worse than none.
+
+  it('names the per-risk override, not the combined one', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-toctou-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    expect(() => assertPrivateDb(db)).toThrow(/NANOCLAW_OFFLINE_FORCE_PERMS/);
+  });
+});
