@@ -203,8 +203,18 @@ export class OfflineTransport implements Transport {
     assertHostNotRunning();
     if (!forced(process.env, FORCE_PERMS_ENV)) assertPrivateDb(dbPath);
     const db = initDb(dbPath);
-    ensurePrivateDb(dbPath); // a DB we just created must not inherit a loose umask
-    if (this.opts.migrate) runMigrations(db);
+    // Everything after the handle exists must unwind it. ensurePrivateDb throws
+    // on a failed chmod and runMigrations can throw for any number of reasons;
+    // without this, either one leaves an open handle behind with `opened` still
+    // false. Today client.ts happens to call close() unconditionally on the error
+    // path, but that is a cross-file courtesy, not this class's own contract.
+    try {
+      ensurePrivateDb(dbPath); // a DB we just created must not inherit a loose umask
+      if (this.opts.migrate) runMigrations(db);
+    } catch (e) {
+      this.close();
+      throw e;
+    }
     this.opened = true;
   }
 

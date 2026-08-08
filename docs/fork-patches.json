@@ -281,6 +281,12 @@
       "intent": "Pins bin/ncl's runner resolution order."
     },
     {
+      "path": "src/cli/offline-transport-unwind.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Proves open() closes the handle it opened when ensurePrivateDb or runMigrations throws, observed via a mocked closeDb."
+    },
+    {
       "path": "src/cli/offline-transport.test.ts",
       "kind": "test",
       "status": "carried",
