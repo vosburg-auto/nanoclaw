@@ -13,10 +13,11 @@
  *      schema out from under a snapshot the operator has not taken yet
  */
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OFFLINE_ENV, offlineRequested } from './offline-transport.js';
+import { OFFLINE_ENV, assertHostNotRunning, assertPrivateDb, offlineRequested } from './offline-transport.js';
 
 // vi.mock factories are hoisted above every top-level const, so the shared
 // recorders come from vi.hoisted and DATA_DIR is a literal.
@@ -122,5 +123,58 @@ describe('the client seam', () => {
     // The offline branch must precede the socket default, or it can never be
     // reached. (toBeLessThan takes no message argument in this vitest version.)
     expect(body.indexOf('OfflineTransport') < body.indexOf('SocketTransport')).toBe(true);
+  });
+});
+
+// --- cross-model (Gemini) review findings ------------------------------------
+
+describe('offline-mode guards added after cross-model review', () => {
+  it('treats explicit negatives as OFF, not as "any non-empty string is on"', () => {
+    for (const v of ['false', 'FALSE', 'no', 'off', '0', '', '  ']) {
+      expect(offlineRequested({ NANOCLAW_OFFLINE: v }), `NANOCLAW_OFFLINE=${v}`).toBe(false);
+    }
+    for (const v of ['1', 'true', 'yes', 'anything']) {
+      expect(offlineRequested({ NANOCLAW_OFFLINE: v }), `NANOCLAW_OFFLINE=${v}`).toBe(true);
+    }
+    expect(offlineRequested({})).toBe(false);
+  });
+
+  it('refuses to run while the host socket exists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-guard-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    expect(() => assertHostNotRunning({}, dir)).toThrow(/host appears to be running/);
+  });
+
+  it('allows the run when no socket is present', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-guard-'));
+    expect(() => assertHostNotRunning({}, dir)).not.toThrow();
+  });
+
+  it('the force override exists, because a stale socket must not trap the operator', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-guard-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE: '1' }, dir)).not.toThrow();
+  });
+
+  it('refuses a group/world-readable database', () => {
+    // The live install really is 0644 while the socket is 0600 — the premise
+    // the original header comment asserted without checking.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-perm-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    expect(() => assertPrivateDb(db)).toThrow(/readable by group\/other/);
+  });
+
+  it('accepts a 0600 database', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-perm-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o600);
+    expect(() => assertPrivateDb(db)).not.toThrow();
+  });
+
+  it('treats an absent database as a fresh install, not a failure', () => {
+    expect(() => assertPrivateDb('/nonexistent/nope/v2.db')).not.toThrow();
   });
 });

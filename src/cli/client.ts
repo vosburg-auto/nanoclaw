@@ -19,7 +19,7 @@ import { randomUUID } from 'crypto';
 
 import { formatResponse } from './format.js';
 import type { RequestFrame } from './frame.js';
-import { OfflineTransport, offlineRequested } from './offline-transport.js';
+import { OFFLINE_ENV, OfflineTransport, offlineRequested } from './offline-transport.js';
 import { SocketTransport } from './socket-client.js';
 import type { Transport } from './transport.js';
 import { formatTransportError } from './transport-errors.js';
@@ -51,7 +51,18 @@ async function main(): Promise<void> {
   // Exit only after stdout drains: process.exit() discards buffered pipe
   // writes, silently truncating any response past the 64KB pipe buffer
   // (bit `ncl sessions list --json` at scale).
-  process.stdout.write(output, () => process.exit(res.ok ? 0 : 1));
+  // Close before exiting: the offline transport holds an open SQLite handle,
+  // and process.exit() would skip WAL/journal cleanup. close() is a no-op on the
+  // socket transport and on an offline transport that never opened.
+  const done = () => {
+    try {
+      transport.close?.();
+    } catch {
+      /* cleanup must never change the command's exit status */
+    }
+    process.exit(res.ok ? 0 : 1);
+  };
+  process.stdout.write(output, done);
 }
 
 function pickTransport(): Transport {

@@ -30,13 +30,16 @@ const checkOnly = process.argv.includes('--check');
 
 function appliedNames(): Set<string> {
   try {
-    const rows = getDb()
-      .prepare("SELECT name FROM schema_version")
-      .all() as Array<{ name: string }>;
+    const rows = getDb().prepare('SELECT name FROM schema_version').all() as Array<{ name: string }>;
     return new Set(rows.map((r) => r.name));
-  } catch {
-    // Table absent on a fresh DB — nothing applied yet.
-    return new Set();
+  } catch (e: unknown) {
+    // ONLY "the table isn't there yet" may read as "nothing applied". A blanket
+    // catch here also swallowed SQLITE_BUSY and permission errors and reported
+    // 0 applied — which, during a recovery, tells the operator the opposite of
+    // the truth about a database it could not actually read. (Cross-model review.)
+    const msg = String((e as Error)?.message ?? e);
+    if (/no such table/i.test(msg)) return new Set();
+    throw new Error(`could not read schema_version from ${dbPath}: ${msg}`);
   }
 }
 
@@ -46,9 +49,7 @@ function main(): void {
     const before = appliedNames();
 
     if (checkOnly) {
-      process.stdout.write(
-        `${dbPath}\n${before.size} migration(s) already applied; --check applied nothing.\n`,
-      );
+      process.stdout.write(`${dbPath}\n${before.size} migration(s) already applied; --check applied nothing.\n`);
       return;
     }
 

@@ -7,4 +7,11 @@ import type { RequestFrame, ResponseFrame } from './frame.js';
 
 export interface Transport {
   sendFrame(req: RequestFrame): Promise<ResponseFrame>;
+  /**
+   * Release any resources held by the transport. OPTIONAL — a socket transport
+   * has nothing to release, but the offline transport holds an open SQLite
+   * handle, and `process.exit()` would skip its WAL/journal cleanup. Callers
+   * should invoke it before exiting and must tolerate its absence.
+   */
+  close?(): void;
 }

@@ -290,6 +290,13 @@
       "guard": "pnpm exec vitest run src/cli/resources/groups-config.test.ts"
     },
     {
+      "path": "src/cli/transport.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Adds an optional close() to the transport interface so the offline SQLite handle can be released before exit.",
+      "guard": "pnpm exec vitest run src/cli/offline-transport.test.ts"
+    },
+    {
       "path": "src/container-config.ts",
       "kind": "source",
       "status": "carried",
