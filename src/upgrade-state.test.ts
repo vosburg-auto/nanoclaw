@@ -11,6 +11,7 @@ vi.mock('./config.js', async () => {
 const TEST_DIR = '/tmp/nanoclaw-test-upgrade-state';
 
 import {
+  TRIPWIRE_EXIT_DELAY_MS,
   enforceUpgradeTripwire,
   getCodeVersion,
   isUpgradeCurrent,
@@ -67,24 +68,76 @@ describe('upgrade-state', () => {
     expect(markerPath()).toBe(path.join(TEST_DIR, 'upgrade-state.json'));
   });
 
-  it('enforceUpgradeTripwire exits when not current and passes when current', () => {
+  it('enforceUpgradeTripwire exits when not current and passes when current', async () => {
     const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
       throw new Error(`exit:${code}`);
     }) as never);
     const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
+    // delayMs: 0 throughout — the delay itself is covered separately below.
+
     // No marker → trips.
-    expect(() => enforceUpgradeTripwire()).toThrow('exit:1');
+    await expect(enforceUpgradeTripwire(0)).rejects.toThrow('exit:1');
 
     // Stale marker → trips.
     writeUpgradeState({ version: '0.0.0-nope', via: 'test' });
-    expect(() => enforceUpgradeTripwire()).toThrow('exit:1');
+    await expect(enforceUpgradeTripwire(0)).rejects.toThrow('exit:1');
 
     // Matching marker → passes.
     writeUpgradeState({ version: getCodeVersion(), via: 'test' });
-    expect(() => enforceUpgradeTripwire()).not.toThrow();
+    await expect(enforceUpgradeTripwire(0)).resolves.toBeUndefined();
 
     exitSpy.mockRestore();
     errSpy.mockRestore();
+  });
+
+  // The crash-loop throttle. The tripwire runs before enforceStartupBackoff(),
+  // so the circuit breaker cannot throttle a persistently-tripped install; this
+  // delay is the only thing standing between a stuck marker and a ~12x/minute
+  // respawn loop under Restart=always. Assert it is actually waited on — a
+  // regression here is silent (the process still exits 1, just instantly).
+  describe('enforceUpgradeTripwire — exit delay', () => {
+    it('waits TRIPWIRE_EXIT_DELAY_MS before exiting when tripped', async () => {
+      vi.useFakeTimers();
+      const exitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
+        throw new Error(`exit:${code}`);
+      }) as never);
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      const settled = vi.fn();
+      const p = enforceUpgradeTripwire().then(settled, settled);
+
+      // One tick short of the delay: still waiting, no exit yet.
+      await vi.advanceTimersByTimeAsync(TRIPWIRE_EXIT_DELAY_MS - 1);
+      expect(settled).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await p;
+      expect(settled).toHaveBeenCalled();
+
+      vi.useRealTimers();
+      exitSpy.mockRestore();
+      errSpy.mockRestore();
+    });
+
+    it('does not delay on the happy path', async () => {
+      writeUpgradeState({ version: getCodeVersion(), via: 'test' });
+      vi.useFakeTimers();
+      const settled = vi.fn();
+      // No timer advance at all — a current install must not touch the timer.
+      await enforceUpgradeTripwire().then(settled);
+      expect(settled).toHaveBeenCalled();
+      vi.useRealTimers();
+    });
+
+    it('the delay is long enough to break a systemd RestartSec=5 loop', () => {
+      // Boundary check on the constant, not the code: the whole point is that
+      // restarts land further apart than the default RestartSec. If someone
+      // tunes this below ~5s the throttle stops throttling anything.
+      expect(TRIPWIRE_EXIT_DELAY_MS).toBeGreaterThan(5_000);
+      // ...and short enough that a human fixing the marker isn't left waiting.
+      expect(TRIPWIRE_EXIT_DELAY_MS).toBeLessThanOrEqual(120_000);
+    });
   });
 });

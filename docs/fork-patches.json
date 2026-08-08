@@ -123,7 +123,7 @@
       "path": "docs/upgrade-recovery.md",
       "kind": "doc",
       "status": "carried",
-      "intent": "Documents the offline path out of the upgrade deadlock (offline-migrate.ts + NANOCLAW_OFFLINE ncl), and states why offline ncl is not a privilege change.",
+      "intent": "Documents the offline path out of the upgrade deadlock (offline-migrate.ts + NANOCLAW_OFFLINE ncl), and states why offline ncl is not a privilege change. Also: Documents the ~30s pause before the tripwire exits, so an operator does not read the wait as a hang.",
       "guard_waiver": "Prose. The behavior it describes is guarded by src/cli/offline-transport.test.ts; a doc guard would assert that a file contains sentences."
     },
     {
@@ -155,11 +155,23 @@
       "guard": "node scripts/fork-guard-liveness.mjs --list"
     },
     {
+      "path": "scripts/fork-guard-liveness.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins the liveness verdict (broken/inert/live) and target selection, so an inverted verdict cannot ship silently."
+    },
+    {
       "path": "scripts/fork-surface.mjs",
       "kind": "source",
       "status": "carried",
       "intent": "Derives the fork patch surface by blob membership and checks it against the manifest.",
       "guard": "node scripts/fork-surface.mjs check"
+    },
+    {
+      "path": "scripts/fork-surface.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins the manifest<->query reconciliation: both staleness directions, the superseded exemption, and the guard-or-waiver rule."
     },
     {
       "path": "scripts/offline-migrate.ts",
@@ -429,6 +441,19 @@
       "status": "carried",
       "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The auto_compact_window field on ContainerConfigRow.",
       "guard": "pnpm exec tsc --noEmit"
+    },
+    {
+      "path": "src/upgrade-state.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the tripwire exit delay \u2014 a regression is otherwise silent, since the process still exits 1, just instantly."
+    },
+    {
+      "path": "src/upgrade-state.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Adds TRIPWIRE_EXIT_DELAY_MS: the tripwire throttles its own exit, because running before the circuit breaker means the breaker cannot throttle it.",
+      "guard": "pnpm exec vitest run src/upgrade-state.test.ts"
     },
     {
       "path": "src/webhook-server.bind.test.ts",

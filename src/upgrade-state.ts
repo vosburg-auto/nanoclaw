@@ -25,6 +25,25 @@ export interface UpgradeState {
 const MARKER_PATH = path.join(DATA_DIR, 'upgrade-state.json');
 const FIX_COMMAND = 'pnpm exec tsx scripts/upgrade-state.ts set';
 
+/**
+ * How long the tripwire waits before exiting, so a persistently-tripped install
+ * is throttled without polluting the circuit breaker's crash count.
+ *
+ * The tripwire runs BEFORE enforceStartupBackoff() (see src/index.ts) precisely
+ * so a deterministic refusal isn't recorded as a crash — but that ordering also
+ * means the breaker's backoff can't throttle it. Under `Restart=always` with the
+ * usual RestartSec=5, an install that stays tripped would respawn ~12x/minute
+ * forever: systemd's default StartLimit (5 starts / 10s) never fires at a 5s
+ * interval, so nothing else stops it either.
+ *
+ * A fixed delay here restores the throttle and is strictly better than borrowing
+ * the breaker's: it's bounded (no 900s ramp on a condition a human is actively
+ * fixing), it leaves the crash counter measuring real crashes, and it's paid
+ * only on the failure path. Async, not a blocking sleep, so SIGTERM still lands
+ * during the wait — an operator stopping the unit shouldn't have to wait it out.
+ */
+export const TRIPWIRE_EXIT_DELAY_MS = 30_000;
+
 /** Version the running code declares, read from package.json. */
 export function getCodeVersion(): string {
   const pkgPath = path.join(process.cwd(), 'package.json');
@@ -85,8 +104,11 @@ export function markerPath(): string {
  * Startup gate. If the install didn't reach the current version through a
  * sanctioned path, stop with a message written for the coding agent that
  * just ran the upgrade to act on automatically.
+ *
+ * Waits `delayMs` before exiting — see TRIPWIRE_EXIT_DELAY_MS for why. Returns
+ * immediately (no delay, no output) on the happy path.
  */
-export function enforceUpgradeTripwire(): void {
+export async function enforceUpgradeTripwire(delayMs = TRIPWIRE_EXIT_DELAY_MS): Promise<void> {
   if (isUpgradeCurrent()) return;
 
   const code = getCodeVersion();
@@ -121,6 +143,16 @@ export function enforceUpgradeTripwire(): void {
       '',
     ].join('\n'),
   );
-  log.error('Upgrade tripwire: install not on the sanctioned path', { code, recorded });
+  log.error('Upgrade tripwire: install not on the sanctioned path', { code, recorded, exitDelayMs: delayMs });
+
+  if (delayMs > 0) {
+    // Announced, so an operator watching journalctl sees a deliberate wait
+    // rather than a hang. Deliberately NOT unref'd: at this point in boot
+    // nothing else holds the event loop, so an unref'd timer would let node
+    // exit immediately — with status 0 — losing both the delay and the
+    // non-zero exit this gate exists to produce.
+    console.error(`(waiting ${Math.round(delayMs / 1000)}s before exiting, to avoid a fast restart loop)\n`);
+    await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+  }
   process.exit(1);
 }
