@@ -14,6 +14,8 @@
  * stale — appliedNames() is bespoke to this script and no host test touches it.
  * (Panel consensus, PR #10.)
  */
+import fs from 'fs';
+
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 
 const getDb = vi.hoisted(() => vi.fn());
@@ -28,6 +30,8 @@ vi.mock('../src/cli/offline-transport.js', () => ({
   assertHostNotRunning: vi.fn(),
   assertPrivateDb: vi.fn(),
   ensurePrivateDb: vi.fn(),
+  forced: vi.fn(() => false),
+  FORCE_PERMS_ENV: 'NANOCLAW_OFFLINE_FORCE_PERMS',
 }));
 
 const throwing = (msg: string) => ({
@@ -119,5 +123,37 @@ describe('main() preconditions', () => {
     main();
     expect(t.assertHostNotRunning).toHaveBeenCalled();
     expect(t.assertPrivateDb).toHaveBeenCalled();
+  });
+});
+
+describe('force-flag handling on the migration entry point', () => {
+  // The migrate script hand-copied the force check instead of calling the shared
+  // decision, so the legacy combined override waived the privacy check here
+  // WITHOUT the "waives BOTH" warning the transport prints — the audit trail
+  // vanished on the entry point that runs the destructive migration.
+  it('uses the shared forced() rather than a private copy of the rule', async () => {
+    const src = fs.readFileSync(new URL('./offline-migrate.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/forced\(process\.env, FORCE_PERMS_ENV\)/);
+    expect(src, 'must not re-implement the env comparison inline').not.toMatch(
+      /NANOCLAW_OFFLINE_FORCE_PERMS\s*\?\?\s*process\.env\.NANOCLAW_OFFLINE_FORCE/,
+    );
+  });
+
+  it('an explicit negative does not waive the privacy check', async () => {
+    const t = await import('../src/cli/offline-transport.js');
+    vi.mocked(t.assertPrivateDb).mockImplementation(() => {
+      throw new Error('readable by group/other');
+    });
+    vi.mocked(t.forced).mockImplementation((env, name) => {
+      const v = String((env as Record<string, string>)[name] ?? '').toLowerCase();
+      return !(v === '' || v === '0' || v === 'false');
+    });
+    process.env.NANOCLAW_OFFLINE_FORCE_PERMS = 'false';
+    try {
+      const { main } = await import('./offline-migrate.js');
+      expect(() => main()).toThrow(/readable by group\/other/);
+    } finally {
+      delete process.env.NANOCLAW_OFFLINE_FORCE_PERMS;
+    }
   });
 });

@@ -64,13 +64,24 @@ import type { Transport } from './transport.js';
 /** Set to any non-empty value to route `ncl` through the DB instead of the socket. */
 export const OFFLINE_ENV = 'NANOCLAW_OFFLINE';
 
-export function offlineRequested(env: NodeJS.ProcessEnv = process.env): boolean {
-  const v = (env[OFFLINE_ENV] ?? '').trim().toLowerCase();
-  // Explicit negatives must mean OFF. Treating any non-empty string as "on"
-  // made `NANOCLAW_OFFLINE=false` enable offline mode — the opposite of what
-  // the operator typed, and silently.
+/**
+ * The ONE truthiness rule for every switch in this file.
+ *
+ * Explicit negatives mean OFF. `NANOCLAW_OFFLINE=false` used to ENABLE offline
+ * mode because any non-empty string was truthy; that was fixed here — and then
+ * `forced()` was written a few lines below with the identical bug, so
+ * `NANOCLAW_OFFLINE_FORCE_LIVENESS=0` silently waived the check it names. A
+ * cross-model review caught the second instance. There is now one parser, so
+ * there is nowhere for a third to hide.
+ */
+export function envFlag(env: NodeJS.ProcessEnv, name: string): boolean {
+  const v = (env[name] ?? '').trim().toLowerCase();
   if (v === '' || v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
   return true;
+}
+
+export function offlineRequested(env: NodeJS.ProcessEnv = process.env): boolean {
+  return envFlag(env, OFFLINE_ENV);
 }
 
 /**
@@ -92,9 +103,9 @@ export const FORCE_PERMS_ENV = 'NANOCLAW_OFFLINE_FORCE_PERMS';
 /** Legacy single switch — still honoured, but it waives BOTH checks, so it warns. */
 export const FORCE_ENV = 'NANOCLAW_OFFLINE_FORCE';
 
-function forced(env: NodeJS.ProcessEnv, specific: string): boolean {
-  if ((env[specific] ?? '') !== '') return true;
-  if ((env[FORCE_ENV] ?? '') === '') return false;
+export function forced(env: NodeJS.ProcessEnv, specific: string): boolean {
+  if (envFlag(env, specific)) return true;
+  if (!envFlag(env, FORCE_ENV)) return false;
   // One variable waiving two unrelated risks is how an operator clearing a stale
   // socket silently also accepts a world-readable database. Keep it working, but
   // say what it just did. (Review consensus.)
@@ -137,10 +148,24 @@ export function assertHostNotRunning(env: NodeJS.ProcessEnv = process.env, dir: 
  * wasn't following the house pattern.
  */
 export function ensurePrivateDb(dbPath: string): void {
+  let mode: number;
   try {
-    if ((fs.statSync(dbPath).mode & 0o077) !== 0) fs.chmodSync(dbPath, 0o600);
+    mode = fs.statSync(dbPath).mode;
   } catch {
-    /* absent or unstattable — nothing to tighten, and open() will surface the real error */
+    return; // absent or unstattable — nothing to tighten; open() surfaces the real error
+  }
+  if ((mode & 0o077) === 0) return;
+  // A FAILED chmod is a different thing entirely from an absent file, and the
+  // single catch that covered both left a fresh database group/world-readable
+  // with no warning at all. Refuse loudly instead: the whole point of this call
+  // is that the file we just created must not be readable by anyone else.
+  try {
+    fs.chmodSync(dbPath, 0o600);
+  } catch (e: unknown) {
+    throw new Error(
+      `refusing to continue: could not make ${dbPath} private (mode ${(mode & 0o777).toString(8)}): ` +
+        `${String((e as Error)?.message ?? e)}\nRun: chmod 600 ${dbPath}`,
+    );
   }
 }
 

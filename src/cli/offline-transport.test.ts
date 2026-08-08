@@ -17,7 +17,15 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OFFLINE_ENV, assertHostNotRunning, assertPrivateDb, ensurePrivateDb, offlineRequested } from './offline-transport.js';
+import {
+  OFFLINE_ENV,
+  assertHostNotRunning,
+  assertPrivateDb,
+  ensurePrivateDb,
+  envFlag,
+  forced,
+  offlineRequested,
+} from './offline-transport.js';
 
 // vi.mock factories are hoisted above every top-level const, so the shared
 // recorders come from vi.hoisted and DATA_DIR is a literal.
@@ -232,5 +240,58 @@ describe('guards hardened after panel-review consensus (PR #10 iter 1)', () => {
     } finally {
       err.mockRestore();
     }
+  });
+});
+
+describe('iter-2 findings: one parser, one force decision, loud chmod failure', () => {
+  it('the FORCE flags honour explicit negatives, exactly like NANOCLAW_OFFLINE', () => {
+    // The bug: forced() used `!== ''`, so FORCE_LIVENESS=0 waived the check it
+    // names — the same truthiness bug offlineRequested() documents and rejects,
+    // rewritten ten lines below it in the same PR.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-neg-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    for (const v of ['0', 'false', 'no', 'off', '']) {
+      expect(
+        () => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE_LIVENESS: v }, dir),
+        `FORCE_LIVENESS=${v} must NOT waive the check`,
+      ).toThrow(/host appears to be running/);
+    }
+    expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE_LIVENESS: '1' }, dir)).not.toThrow();
+  });
+
+  it('envFlag is the single truthiness rule both switches read through', () => {
+    for (const v of ['0', 'false', 'FALSE', 'no', 'off', '', '   ']) {
+      expect(envFlag({ X: v }, 'X'), `X=${v}`).toBe(false);
+    }
+    for (const v of ['1', 'true', 'yes', 'whatever']) expect(envFlag({ X: v }, 'X'), `X=${v}`).toBe(true);
+    expect(envFlag({}, 'X')).toBe(false);
+  });
+
+  it('forced() is exported so both entry points share one decision', () => {
+    expect(typeof forced).toBe('function');
+    expect(forced({ NANOCLAW_OFFLINE_FORCE_PERMS: '1' }, 'NANOCLAW_OFFLINE_FORCE_PERMS')).toBe(true);
+    expect(forced({ NANOCLAW_OFFLINE_FORCE_PERMS: 'false' }, 'NANOCLAW_OFFLINE_FORCE_PERMS')).toBe(false);
+  });
+
+  it('a failed chmod THROWS instead of silently leaving the DB readable', () => {
+    // One catch covered both "file absent" (fine) and "chmod failed" (not fine),
+    // so a fresh DB could stay world-readable with no warning at all.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-chmod-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    const spy = vi.spyOn(fs, 'chmodSync').mockImplementation(() => {
+      throw new Error('EPERM: operation not permitted');
+    });
+    try {
+      expect(() => ensurePrivateDb(db)).toThrow(/could not make .* private/);
+      expect(() => ensurePrivateDb(db)).toThrow(/chmod 600/);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('an absent file is still silently fine — that case was never the problem', () => {
+    expect(() => ensurePrivateDb('/nonexistent/nope/v2.db')).not.toThrow();
   });
 });

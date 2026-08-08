@@ -25,7 +25,13 @@ import { fileURLToPath } from 'url';
 import { DATA_DIR } from '../src/config.js';
 import { initDb, closeDb, getDb } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/migrations/index.js';
-import { assertHostNotRunning, assertPrivateDb, ensurePrivateDb } from '../src/cli/offline-transport.js';
+import {
+  FORCE_PERMS_ENV,
+  assertHostNotRunning,
+  assertPrivateDb,
+  ensurePrivateDb,
+  forced,
+} from '../src/cli/offline-transport.js';
 
 const dbPath = path.join(DATA_DIR, 'v2.db');
 const checkOnly = process.argv.includes('--check');
@@ -54,9 +60,12 @@ export function main(): void {
   // which fixed the named instance and left the more dangerous entry point open;
   // a review consensus (five lenses, including a cross-family one) caught it.
   assertHostNotRunning();
-  if ((process.env.NANOCLAW_OFFLINE_FORCE_PERMS ?? process.env.NANOCLAW_OFFLINE_FORCE ?? '') === '') {
-    assertPrivateDb(dbPath);
-  }
+  // The SHARED decision, not a hand-copy of it. An earlier revision duplicated
+  // this check inline, which meant the legacy combined override waived the
+  // privacy check here WITHOUT printing the "waives BOTH" warning that the
+  // transport prints — the audit trail went missing on the entry point that
+  // runs the destructive migration. Review consensus, three lenses.
+  if (!forced(process.env, FORCE_PERMS_ENV)) assertPrivateDb(dbPath);
   initDb(dbPath);
   ensurePrivateDb(dbPath);
   try {

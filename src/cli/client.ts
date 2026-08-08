@@ -52,10 +52,24 @@ async function main(): Promise<void> {
     process.exit(2);
   }
 
-  const output =
-    !json && res.ok && res.human !== undefined
-      ? res.human + '\n' // server-rendered view — print verbatim
-      : formatResponse(res, json ? 'json' : 'human');
+  // formatResponse INSIDE the guarded region: it ran outside, so a formatting
+  // throw fell through to the top-level catch and never closed the transport —
+  // a residual hole in the very "close on every path" fix this file makes.
+  let output: string;
+  try {
+    output =
+      !json && res.ok && res.human !== undefined
+        ? res.human + '\n' // server-rendered view — print verbatim
+        : formatResponse(res, json ? 'json' : 'human');
+  } catch (e) {
+    process.stderr.write(`ncl: could not format the response: ${e instanceof Error ? e.message : String(e)}\n`);
+    try {
+      transport.close?.();
+    } catch {
+      /* cleanup must never mask the formatting error */
+    }
+    process.exit(2);
+  }
   // Exit only after stdout drains: process.exit() discards buffered pipe
   // writes, silently truncating any response past the 64KB pipe buffer
   // (bit `ncl sessions list --json` at scale).
