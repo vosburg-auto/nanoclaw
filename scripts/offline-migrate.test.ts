@@ -12,7 +12,7 @@
  * The manifest previously waived a guard here on the grounds that the body was
  * "initDb + runMigrations, covered by the host's own migration tests". That was
  * stale — appliedNames() is bespoke to this script and no host test touches it.
- * (Panel consensus, PR #10.)
+ *
  */
 import fs from 'fs';
 
@@ -155,5 +155,73 @@ describe('force-flag handling on the migration entry point', () => {
     } finally {
       delete process.env.NANOCLAW_OFFLINE_FORCE_PERMS;
     }
+  });
+});
+
+describe('--check (report-only) mode', () => {
+  // The safer of the two documented invocations, and the one operators are told
+  // to run first — previously with no test proving it applies nothing.
+  const withArgv = async (argv: string[]) => {
+    const saved = process.argv;
+    process.argv = ['node', 'offline-migrate.ts', ...argv];
+    try {
+      vi.resetModules();
+      return await import('./offline-migrate.js');
+    } finally {
+      process.argv = saved;
+    }
+  };
+
+  it('applies nothing and says so', async () => {
+    getDb.mockReturnValue({ prepare: () => ({ all: () => [{ name: 'a' }, { name: 'b' }] }) });
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const mod = await withArgv(['--check']);
+      const mig = await import('../src/db/migrations/index.js');
+      mod.main();
+      expect(mig.runMigrations, '--check must not apply migrations').not.toHaveBeenCalled();
+      const printed = out.mock.calls.map((c) => String(c[0])).join('');
+      expect(printed).toMatch(/2 migration\(s\) already applied/);
+      expect(printed).toMatch(/--check applied nothing/);
+    } finally {
+      out.mockRestore();
+    }
+  });
+
+  it('still enforces the preconditions — --check is not a way around them', async () => {
+    const t = await import('../src/cli/offline-transport.js');
+    vi.mocked(t.assertHostNotRunning).mockImplementation(() => {
+      throw new Error('host appears to be running');
+    });
+    const mod = await withArgv(['--check']);
+    expect(() => mod.main()).toThrow(/host appears to be running/);
+  });
+
+  it('without --check it does apply', async () => {
+    getDb.mockReturnValue({ prepare: () => ({ all: () => [] }) });
+    const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+    try {
+      const mod = await withArgv([]);
+      const mig = await import('../src/db/migrations/index.js');
+      mod.main();
+      expect(mig.runMigrations).toHaveBeenCalled();
+    } finally {
+      out.mockRestore();
+    }
+  });
+});
+
+describe('handle lifetime', () => {
+  it('closes the database even when ensurePrivateDb throws', async () => {
+    // ensurePrivateDb gained a throw (failed chmod) in an earlier commit while
+    // sitting between initDb and the try/finally, so that throw leaked the handle.
+    const t = await import('../src/cli/offline-transport.js');
+    const conn = await import('../src/db/connection.js');
+    vi.mocked(t.ensurePrivateDb).mockImplementation(() => {
+      throw new Error('could not make it private');
+    });
+    const { main } = await import('./offline-migrate.js');
+    expect(() => main()).toThrow(/could not make it private/);
+    expect(conn.closeDb, 'the handle initDb opened must still be closed').toHaveBeenCalled();
   });
 });

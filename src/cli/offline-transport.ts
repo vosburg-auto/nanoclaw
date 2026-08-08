@@ -30,9 +30,8 @@
  * listens, and the process exits when the command does. There is no flag to
  * leave on.
  *
- * ON PRIVILEGE — an earlier revision of this comment claimed the trust boundary
- * was "unchanged" because both paths need the same 0600-owner-only access. That
- * was FALSE, and a cross-model review caught it. On the live install the socket
+ * ON PRIVILEGE — the socket and the database are NOT equivalent gates, though
+ * it is tempting to assume they are. On the live install the socket
  * is `srw------- (0600)` but the database is `-rw-r--r-- (0644)`, so the two
  * gates are NOT equivalent: the socket restricts all access to the owner, while
  * a world-readable DB lets any local user READ host state offline that the
@@ -42,10 +41,10 @@
  * The `caller: 'host'` context itself is still right — `guard/index.ts` treats it
  * as trusted and exempt from `access: 'approval'`, which is the same authority an
  * operator already has at the socket; the approval gate exists to hold
- * AGENT-initiated calls, never operator ones. What was wrong was the claim about
- * the precondition, so the transport now CHECKS it (see assertPrivateDb) and
- * refuses a group/world-readable database rather than asserting a property it
- * never verified. It is deliberately NOT exposed to containers: nothing in
+ * AGENT-initiated calls, never operator ones. It is the file-permission
+ * precondition that differs, so the transport CHECKS it (see assertPrivateDb)
+ * and refuses a group/world-readable database rather than assuming a property
+ * it has not verified. It is deliberately NOT exposed to containers: nothing in
  * `container/` can construct this transport, because the agent-runner never has
  * the host's data directory mounted.
  *
@@ -70,9 +69,8 @@ export const OFFLINE_ENV = 'NANOCLAW_OFFLINE';
  * Explicit negatives mean OFF. `NANOCLAW_OFFLINE=false` used to ENABLE offline
  * mode because any non-empty string was truthy; that was fixed here — and then
  * `forced()` was written a few lines below with the identical bug, so
- * `NANOCLAW_OFFLINE_FORCE_LIVENESS=0` silently waived the check it names. A
- * cross-model review caught the second instance. There is now one parser, so
- * there is nowhere for a third to hide.
+ * `NANOCLAW_OFFLINE_FORCE_LIVENESS=0` silently waived the check it names. There is now one parser, so
+ * there is nowhere for a third instance to hide.
  */
 export function envFlag(env: NodeJS.ProcessEnv, name: string): boolean {
   const v = (env[name] ?? '').trim().toLowerCase();
@@ -108,7 +106,7 @@ export function forced(env: NodeJS.ProcessEnv, specific: string): boolean {
   if (!envFlag(env, FORCE_ENV)) return false;
   // One variable waiving two unrelated risks is how an operator clearing a stale
   // socket silently also accepts a world-readable database. Keep it working, but
-  // say what it just did. (Review consensus.)
+  // say what it just did.
   process.stderr.write(
     `ncl: ${FORCE_ENV} waives BOTH the host-liveness and DB-privacy checks. ` +
       `Prefer ${FORCE_LIVENESS_ENV} or ${FORCE_PERMS_ENV} to waive only the one you mean.\n`,
@@ -129,14 +127,6 @@ export function assertHostNotRunning(env: NodeJS.ProcessEnv = process.env, dir: 
   );
 }
 
-/**
- * Refuse a group/world-readable database.
- *
- * Offline mode reaches `caller: 'host'` — the trusted context — through file
- * access to the DB rather than to the 0600 socket. Those are only equivalent
- * gates if the DB is equally private, and on the live install it is NOT (0644).
- * Rather than restate the assumption, check it.
- */
 /**
  * Make a just-created database private.
  *
@@ -169,6 +159,14 @@ export function ensurePrivateDb(dbPath: string): void {
   }
 }
 
+/**
+ * Refuse a group/world-readable database.
+ *
+ * Offline mode reaches `caller: 'host'` — the trusted context — through file
+ * access to the DB rather than to the 0600 socket. Those are only equivalent
+ * gates if the DB is equally private, and on the live install it is NOT (0644).
+ * Rather than restate the assumption, check it.
+ */
 export function assertPrivateDb(dbPath: string): void {
   let mode: number;
   try {

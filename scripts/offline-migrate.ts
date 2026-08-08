@@ -42,9 +42,9 @@ export function appliedNames(): Set<string> {
     return new Set(rows.map((r) => r.name));
   } catch (e: unknown) {
     // ONLY "the table isn't there yet" may read as "nothing applied". A blanket
-    // catch here also swallowed SQLITE_BUSY and permission errors and reported
-    // 0 applied — which, during a recovery, tells the operator the opposite of
-    // the truth about a database it could not actually read. (Cross-model review.)
+    // catch would also swallow SQLITE_BUSY and permission errors and report
+    // 0 applied — during a recovery, the opposite of the truth about a database
+    // that could not be read at all.
     const msg = String((e as Error)?.message ?? e);
     if (/no such table/i.test(msg)) return new Set();
     throw new Error(`could not read schema_version from ${dbPath}: ${msg}`);
@@ -56,19 +56,18 @@ export function main(): void {
   // here: this path runs schema migrations. Migration 016 does a destructive
   // DROP + RENAME of messaging_groups with no down migration, so running it under
   // a live host — which holds prepared statements against the old schema — is the
-  // worst version of the race. An earlier revision guarded only the transport,
-  // which fixed the named instance and left the more dangerous entry point open;
-  // a review consensus (five lenses, including a cross-family one) caught it.
+  // worst version of the race.
   assertHostNotRunning();
-  // The SHARED decision, not a hand-copy of it. An earlier revision duplicated
-  // this check inline, which meant the legacy combined override waived the
-  // privacy check here WITHOUT printing the "waives BOTH" warning that the
-  // transport prints — the audit trail went missing on the entry point that
-  // runs the destructive migration. Review consensus, three lenses.
+  // The shared decision, not a copy: a local re-implementation silently loses
+  // the "waives BOTH" warning on the entry point that runs the destructive
+  // migration.
   if (!forced(process.env, FORCE_PERMS_ENV)) assertPrivateDb(dbPath);
-  initDb(dbPath);
-  ensurePrivateDb(dbPath);
+  // initDb INSIDE the try: everything after the handle is opened must be covered
+  // by the finally that closes it. ensurePrivateDb can throw (a failed chmod), and
+  // when it sits outside, that throw leaks the handle.
   try {
+    initDb(dbPath);
+    ensurePrivateDb(dbPath);
     const before = appliedNames();
 
     if (checkOnly) {

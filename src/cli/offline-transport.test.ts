@@ -134,9 +134,9 @@ describe('the client seam', () => {
   });
 });
 
-// --- cross-model (Gemini) review findings ------------------------------------
+// --- request parsing and precondition guards --------------------------------
 
-describe('offline-mode guards added after cross-model review', () => {
+describe('offline-mode request parsing and guards', () => {
   it('treats explicit negatives as OFF, not as "any non-empty string is on"', () => {
     for (const v of ['false', 'FALSE', 'no', 'off', '0', '', '  ']) {
       expect(offlineRequested({ NANOCLAW_OFFLINE: v }), `NANOCLAW_OFFLINE=${v}`).toBe(false);
@@ -187,7 +187,7 @@ describe('offline-mode guards added after cross-model review', () => {
   });
 });
 
-describe('guards hardened after panel-review consensus (PR #10 iter 1)', () => {
+describe('offline-mode preconditions', () => {
   it('a fresh database is chmod 600, not left to the umask', () => {
     // assertPrivateDb skips a DB that does not exist yet and initDb never
     // chmods, so under a 022 umask the file landed 0644 — the exact mode the
@@ -243,7 +243,7 @@ describe('guards hardened after panel-review consensus (PR #10 iter 1)', () => {
   });
 });
 
-describe('iter-2 findings: one parser, one force decision, loud chmod failure', () => {
+describe('one env parser, one force decision, loud chmod failure', () => {
   it('the FORCE flags honour explicit negatives, exactly like NANOCLAW_OFFLINE', () => {
     // The bug: forced() used `!== ''`, so FORCE_LIVENESS=0 waived the check it
     // names — the same truthiness bug offlineRequested() documents and rejects,
@@ -293,5 +293,44 @@ describe('iter-2 findings: one parser, one force decision, loud chmod failure', 
 
   it('an absent file is still silently fine — that case was never the problem', () => {
     expect(() => ensurePrivateDb('/nonexistent/nope/v2.db')).not.toThrow();
+  });
+});
+
+describe('client.ts closes the transport on every exit path', () => {
+  // client.ts self-executes main() on import, so it cannot be unit-imported.
+  // A source-level assertion is the honest option here, and it is what stops a
+  // silent revert of any of the three close sites: the sendFrame catch, the
+  // formatResponse catch, and the success-path drain callback.
+  const src = fs.readFileSync(new URL('./client.ts', import.meta.url), 'utf8');
+
+  it('has a close call on all three exit paths', () => {
+    expect(src.match(/transport\.close\?\.\(\)/g) ?? [], 'expected 3 close sites').toHaveLength(3);
+  });
+
+  it('closes before every process.exit inside main(), after the transport exists', () => {
+    // Scoped to main()'s BODY on purpose. Two earlier versions of this test were
+    // wrong in ways worth recording: the first split on raw text and matched a
+    // process.exit() mentioned in a COMMENT; the second assumed textual position
+    // implied execution order and flagged parseArgv's exit (which runs before any
+    // transport exists) and the top-level catch (where none is in scope).
+    const code = src.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
+    const start = code.indexOf('const transport');
+    const end = code.indexOf('function pickTransport');
+    expect(start, 'precondition: transport is constructed in main()').toBeGreaterThan(0);
+    expect(end, 'precondition: main() ends before pickTransport').toBeGreaterThan(start);
+
+    const mainBody = code.slice(start, end);
+    const segments = mainBody.split(/process\.exit\(/).slice(0, -1);
+    expect(segments.length, 'expected the three guarded exit paths').toBe(3);
+    for (const seg of segments) {
+      expect(seg, `an exit path with no close():\n...${seg.slice(-220)}`).toMatch(/transport\.close\?\.\(\)/);
+    }
+  });
+
+  it('formatResponse runs inside a guarded region, not outside it', () => {
+    const guarded = src.slice(src.indexOf('let output'), src.indexOf('process.stdout.write(output'));
+    expect(guarded).toMatch(/try\s*\{/);
+    expect(guarded).toMatch(/formatResponse\(/);
+    expect(guarded).toMatch(/transport\.close\?\.\(\)/);
   });
 });
