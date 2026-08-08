@@ -61,7 +61,18 @@ NANOCLAW_OFFLINE=1 ncl tasks pause <series-id> --group <group-id>
 
 Then finish the upgrade and stamp the marker last, as above.
 
-Offline `ncl` runs as a **host** caller, which is the same authority you already have running `ncl` against `data/ncl.sock` — the approval gate holds agent-initiated calls, not operator ones. It reaches that authority through file access to `data/v2.db` rather than to the socket, so the owner-only precondition is unchanged. Containers cannot use it: the agent-runner never mounts the host's data directory.
+Offline `ncl` runs as a **host** caller, which is the same authority you already have running `ncl` against `data/ncl.sock` — the approval gate holds agent-initiated calls, not operator ones. It reaches that authority through file access to `data/v2.db` rather than to the socket.
+
+**Those two are not the same gate**, and an earlier version of this page said they were. The socket is `0600` (owner only); a database left at `0644` is readable by any local user, so offline mode would hand host-level READ access to someone the socket would have refused. (Writes still need the owner.) So the transport checks instead of assuming: it refuses to run against a group/world-readable database and prints the `chmod 600` to fix it, and a database it creates itself is chmod'd private rather than left to your umask.
+
+**Two more refusals you may hit, both deliberate:**
+
+- *"the host appears to be running"* — `data/ncl.sock` exists. Offline mode writes the database directly while the host caches state in memory, so changes made now can be silently overwritten, and an offline migration would move the schema under a live process. Stop the host. If the socket is stale after an unclean kill, set `NANOCLAW_OFFLINE_FORCE_LIVENESS=1`.
+- *"readable by group/other"* — run the `chmod 600` it prints, or set `NANOCLAW_OFFLINE_FORCE_PERMS=1` if you have accepted the exposure on that host.
+
+`NANOCLAW_OFFLINE_FORCE=1` still works but waives **both**, which is rarely what you mean — it warns when used.
+
+Containers cannot use any of this: the agent-runner never mounts the host's data directory.
 
 ## The override
 

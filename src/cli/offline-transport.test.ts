@@ -17,7 +17,7 @@ import os from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OFFLINE_ENV, assertHostNotRunning, assertPrivateDb, offlineRequested } from './offline-transport.js';
+import { OFFLINE_ENV, assertHostNotRunning, assertPrivateDb, ensurePrivateDb, offlineRequested } from './offline-transport.js';
 
 // vi.mock factories are hoisted above every top-level const, so the shared
 // recorders come from vi.hoisted and DATA_DIR is a literal.
@@ -176,5 +176,61 @@ describe('offline-mode guards added after cross-model review', () => {
 
   it('treats an absent database as a fresh install, not a failure', () => {
     expect(() => assertPrivateDb('/nonexistent/nope/v2.db')).not.toThrow();
+  });
+});
+
+describe('guards hardened after panel-review consensus (PR #10 iter 1)', () => {
+  it('a fresh database is chmod 600, not left to the umask', () => {
+    // assertPrivateDb skips a DB that does not exist yet and initDb never
+    // chmods, so under a 022 umask the file landed 0644 — the exact mode the
+    // guard rejects, on a file we created ourselves.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-fresh-'));
+    const db = path.join(dir, 'v2.db');
+    const saved = process.umask(0o022);
+    try {
+      fs.writeFileSync(db, '');
+      expect(fs.statSync(db).mode & 0o077).not.toBe(0);
+      ensurePrivateDb(db);
+      expect(fs.statSync(db).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(saved);
+    }
+  });
+
+  it('ensurePrivateDb leaves an already-private database alone and tolerates an absent one', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-fresh-'));
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o600);
+    ensurePrivateDb(db);
+    expect(fs.statSync(db).mode & 0o777).toBe(0o600);
+    expect(() => ensurePrivateDb(path.join(dir, 'nope.db'))).not.toThrow();
+  });
+
+  it('the liveness override no longer waives the permissions check too', () => {
+    // One variable waiving two unrelated risks meant an operator clearing a
+    // stale socket silently also accepted a world-readable database.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-split-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE_LIVENESS: '1' }, dir)).not.toThrow();
+
+    const db = path.join(dir, 'v2.db');
+    fs.writeFileSync(db, '');
+    fs.chmodSync(db, 0o644);
+    // The permissions guard is a separate decision and must still refuse.
+    expect(() => assertPrivateDb(db)).toThrow(/readable by group\/other/);
+  });
+
+  it('the legacy combined override still works, and warns that it waives both', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'offline-legacy-'));
+    fs.writeFileSync(path.join(dir, 'ncl.sock'), '');
+    const err = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    try {
+      expect(() => assertHostNotRunning({ NANOCLAW_OFFLINE_FORCE: '1' }, dir)).not.toThrow();
+      expect(err).toHaveBeenCalled();
+      expect(String(err.mock.calls[0][0])).toMatch(/waives BOTH/);
+    } finally {
+      err.mockRestore();
+    }
   });
 });

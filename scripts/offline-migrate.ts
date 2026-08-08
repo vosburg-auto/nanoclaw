@@ -20,15 +20,17 @@
  * premature-marker problem the runbook ordering exists to prevent.
  */
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { DATA_DIR } from '../src/config.js';
 import { initDb, closeDb, getDb } from '../src/db/connection.js';
 import { runMigrations } from '../src/db/migrations/index.js';
+import { assertHostNotRunning, assertPrivateDb, ensurePrivateDb } from '../src/cli/offline-transport.js';
 
 const dbPath = path.join(DATA_DIR, 'v2.db');
 const checkOnly = process.argv.includes('--check');
 
-function appliedNames(): Set<string> {
+export function appliedNames(): Set<string> {
   try {
     const rows = getDb().prepare('SELECT name FROM schema_version').all() as Array<{ name: string }>;
     return new Set(rows.map((r) => r.name));
@@ -43,8 +45,20 @@ function appliedNames(): Set<string> {
   }
 }
 
-function main(): void {
+export function main(): void {
+  // The SAME preconditions OfflineTransport.open() enforces, and MORE load-bearing
+  // here: this path runs schema migrations. Migration 016 does a destructive
+  // DROP + RENAME of messaging_groups with no down migration, so running it under
+  // a live host — which holds prepared statements against the old schema — is the
+  // worst version of the race. An earlier revision guarded only the transport,
+  // which fixed the named instance and left the more dangerous entry point open;
+  // a review consensus (five lenses, including a cross-family one) caught it.
+  assertHostNotRunning();
+  if ((process.env.NANOCLAW_OFFLINE_FORCE_PERMS ?? process.env.NANOCLAW_OFFLINE_FORCE ?? '') === '') {
+    assertPrivateDb(dbPath);
+  }
   initDb(dbPath);
+  ensurePrivateDb(dbPath);
   try {
     const before = appliedNames();
 
@@ -72,4 +86,8 @@ function main(): void {
   }
 }
 
-main();
+// Main-guard: importing this module (from its test) must not touch a database,
+// shell out, or exit. Mirrors the pattern the fork's .mjs scripts use.
+const invokedDirectly =
+  process.argv[1] !== undefined && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
+if (invokedDirectly) main();

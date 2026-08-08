@@ -41,6 +41,14 @@ async function main(): Promise<void> {
     res = await transport.sendFrame(req);
   } catch (e) {
     process.stderr.write(formatTransportError(e));
+    // Same reason as the success path below: the offline transport holds an open
+    // SQLite handle and process.exit() skips WAL/journal cleanup. The error path
+    // needs it MORE — sendFrame may have failed after the DB was opened.
+    try {
+      transport.close?.();
+    } catch {
+      /* cleanup must never mask the transport error we are already reporting */
+    }
     process.exit(2);
   }
 

@@ -87,8 +87,26 @@ export function offlineRequested(env: NodeJS.ProcessEnv = process.env): boolean 
  * Overridable, because a stale socket after an unclean kill would otherwise trap
  * the operator in the very deadlock this feature exists to break.
  */
+export const FORCE_LIVENESS_ENV = 'NANOCLAW_OFFLINE_FORCE_LIVENESS';
+export const FORCE_PERMS_ENV = 'NANOCLAW_OFFLINE_FORCE_PERMS';
+/** Legacy single switch — still honoured, but it waives BOTH checks, so it warns. */
+export const FORCE_ENV = 'NANOCLAW_OFFLINE_FORCE';
+
+function forced(env: NodeJS.ProcessEnv, specific: string): boolean {
+  if ((env[specific] ?? '') !== '') return true;
+  if ((env[FORCE_ENV] ?? '') === '') return false;
+  // One variable waiving two unrelated risks is how an operator clearing a stale
+  // socket silently also accepts a world-readable database. Keep it working, but
+  // say what it just did. (Review consensus.)
+  process.stderr.write(
+    `ncl: ${FORCE_ENV} waives BOTH the host-liveness and DB-privacy checks. ` +
+      `Prefer ${FORCE_LIVENESS_ENV} or ${FORCE_PERMS_ENV} to waive only the one you mean.\n`,
+  );
+  return true;
+}
+
 export function assertHostNotRunning(env: NodeJS.ProcessEnv = process.env, dir: string = DATA_DIR): void {
-  if ((env.NANOCLAW_OFFLINE_FORCE ?? '') !== '') return;
+  if (forced(env, FORCE_LIVENESS_ENV)) return;
   const sock = path.join(dir, 'ncl.sock');
   if (!fs.existsSync(sock)) return;
   throw new Error(
@@ -108,6 +126,24 @@ export function assertHostNotRunning(env: NodeJS.ProcessEnv = process.env, dir: 
  * gates if the DB is equally private, and on the live install it is NOT (0644).
  * Rather than restate the assumption, check it.
  */
+/**
+ * Make a just-created database private.
+ *
+ * assertPrivateDb deliberately skips a DB that does not exist yet — but initDb
+ * never chmods, so the file lands at whatever the umask allows (0644 under the
+ * common 022). That is precisely the mode the guard exists to reject, so the
+ * next offline command would refuse against a file WE created. The repo already
+ * does this for its sockets (socket-server.ts, channels/cli.ts); this path just
+ * wasn't following the house pattern.
+ */
+export function ensurePrivateDb(dbPath: string): void {
+  try {
+    if ((fs.statSync(dbPath).mode & 0o077) !== 0) fs.chmodSync(dbPath, 0o600);
+  } catch {
+    /* absent or unstattable — nothing to tighten, and open() will surface the real error */
+  }
+}
+
 export function assertPrivateDb(dbPath: string): void {
   let mode: number;
   try {
@@ -142,8 +178,9 @@ export class OfflineTransport implements Transport {
     if (this.opened) return;
     const dbPath = this.opts.dbPath ?? path.join(DATA_DIR, 'v2.db');
     assertHostNotRunning();
-    if ((process.env.NANOCLAW_OFFLINE_FORCE ?? '') === '') assertPrivateDb(dbPath);
+    if (!forced(process.env, FORCE_PERMS_ENV)) assertPrivateDb(dbPath);
     const db = initDb(dbPath);
+    ensurePrivateDb(dbPath); // a DB we just created must not inherit a loose umask
     if (this.opts.migrate) runMigrations(db);
     this.opened = true;
   }
@@ -154,8 +191,15 @@ export class OfflineTransport implements Transport {
   }
 
   close(): void {
-    if (!this.opened) return;
-    closeDb();
+    // NOT gated on `opened`: that flag is set only after initDb() returns, so a
+    // throw between the handle opening and the flag being set would leak it —
+    // exactly the window a failing offline command runs through. closeDb() on a
+    // never-opened DB is a no-op, so the unconditional call is the safe one.
+    try {
+      closeDb();
+    } catch {
+      /* nothing useful to do while tearing down */
+    }
     this.opened = false;
   }
 }

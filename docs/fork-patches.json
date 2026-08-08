@@ -174,11 +174,17 @@
       "intent": "Pins the manifest<->query reconciliation: both staleness directions, the superseded exemption, and the guard-or-waiver rule."
     },
     {
+      "path": "scripts/offline-migrate.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins appliedNames() error discrimination: only a missing table reads as a fresh DB; SQLITE_BUSY and permission errors must throw, not report zero applied."
+    },
+    {
       "path": "scripts/offline-migrate.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Operator entry point that runs the central-DB schema migrations with no host process \u2014 the other half of the upgrade deadlock. Deliberately does NOT stamp the upgrade marker; stamping stays a separate last step.",
-      "guard_waiver": "Operator-invoked script with no in-process caller: its body is initDb + runMigrations, both covered by the host's own migration tests. A guard here would assert that a script calls two functions, which the type checker already enforces."
+      "intent": "Operator entry point that runs the central-DB schema migrations with no host process. Enforces the same host-not-running and DB-privacy preconditions as the offline transport \u2014 more load-bearing here, since this path runs the destructive migration 016. Deliberately does NOT stamp the upgrade marker.",
+      "guard": "pnpm exec vitest run scripts/offline-migrate.test.ts"
     },
     {
       "path": "setup/env-secret-callers.test.ts",
