@@ -10,7 +10,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 import { writeSecretEnvFile } from './env-utils.js';
 
@@ -48,12 +48,20 @@ describe('writeSecretEnvFile', () => {
   });
 
   it('leaves no window at a wider mode when the umask is permissive', () => {
+    // Asserting the mode AFTER the call cannot see a window: the trailing
+    // chmodSync repairs anything writeFileSync got wrong, so this passed even
+    // if the create-time `{ mode: 0o600 }` were dropped — the exact defect the
+    // test is named for. Neutralize the repair and assert the CREATION mode, so
+    // a lost mode option opens a real 0666 window and turns this red.
+    // (Cross-model review of the fork-sync PR.)
     const saved = process.umask(0o000);
+    const chmod = vi.spyOn(fs, 'chmodSync').mockImplementation(() => {});
     try {
       const p = path.join(dir, '.env');
       writeSecretEnvFile(p, 'A=1\n');
-      expect(modeOf(p)).toBe(0o600);
+      expect(modeOf(p), 'the file must be created private, not repaired afterwards').toBe(0o600);
     } finally {
+      chmod.mockRestore();
       process.umask(saved);
     }
   });
