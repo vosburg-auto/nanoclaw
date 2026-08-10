@@ -317,8 +317,8 @@
       "path": "src/cli/transport.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Adds an optional close() to the transport interface so the offline SQLite handle can be released before exit.",
-      "guard": "pnpm exec vitest run src/cli/offline-transport.test.ts"
+      "intent": "Adds an optional close() to the transport interface so the offline SQLite handle is released before exit. TYPE-LEVEL patch: guarded by tsc, not by a runtime test \u2014 types are erased at runtime, so a vitest guard passes with the interface reverted and reports safety it does not provide.",
+      "guard": "pnpm exec tsc --noEmit"
     },
     {
       "path": "src/container-config.ts",
