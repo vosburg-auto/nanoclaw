@@ -19,6 +19,7 @@ import { randomUUID } from 'crypto';
 
 import { formatResponse } from './format.js';
 import type { RequestFrame } from './frame.js';
+import { OFFLINE_ENV, OfflineTransport, offlineRequested } from './offline-transport.js';
 import { SocketTransport } from './socket-client.js';
 import type { Transport } from './transport.js';
 import { formatTransportError } from './transport-errors.js';
@@ -40,14 +41,59 @@ async function main(): Promise<void> {
     res = await transport.sendFrame(req);
   } catch (e) {
     process.stderr.write(formatTransportError(e));
+    // Same reason as the success path below: the offline transport holds an open
+    // SQLite handle and process.exit() skips WAL/journal cleanup. The error path
+    // needs it MORE — sendFrame may have failed after the DB was opened.
+    try {
+      transport.close?.();
+    } catch {
+      /* cleanup must never mask the transport error we are already reporting */
+    }
     process.exit(2);
   }
 
-  process.stdout.write(formatResponse(res, json ? 'json' : 'human'));
-  process.exit(res.ok ? 0 : 1);
+  // formatResponse INSIDE the guarded region: it ran outside, so a formatting
+  // throw fell through to the top-level catch and never closed the transport —
+  // a residual hole in the very "close on every path" fix this file makes.
+  let output: string;
+  try {
+    output =
+      !json && res.ok && res.human !== undefined
+        ? res.human + '\n' // server-rendered view — print verbatim
+        : formatResponse(res, json ? 'json' : 'human');
+  } catch (e) {
+    process.stderr.write(`ncl: could not format the response: ${e instanceof Error ? e.message : String(e)}\n`);
+    try {
+      transport.close?.();
+    } catch {
+      /* cleanup must never mask the formatting error */
+    }
+    process.exit(2);
+  }
+  // Exit only after stdout drains: process.exit() discards buffered pipe
+  // writes, silently truncating any response past the 64KB pipe buffer
+  // (bit `ncl sessions list --json` at scale).
+  // Close before exiting: the offline transport holds an open SQLite handle,
+  // and process.exit() would skip WAL/journal cleanup. close() is a no-op on the
+  // socket transport and on an offline transport that never opened.
+  const done = () => {
+    try {
+      transport.close?.();
+    } catch {
+      /* cleanup must never change the command's exit status */
+    }
+    process.exit(res.ok ? 0 : 1);
+  };
+  process.stdout.write(output, done);
 }
 
 function pickTransport(): Transport {
+  // Fork patch (vosburg-auto): NANOCLAW_OFFLINE routes `ncl` at data/v2.db
+  // instead of data/ncl.sock, so the upgrade runbook can run `ncl groups list`
+  // / `ncl tasks pause` BEFORE the host is allowed to boot. Without it the
+  // sanctioned order is unreachable — see src/cli/offline-transport.ts for the
+  // deadlock and why this is a transport rather than a boot flag.
+  if (offlineRequested()) return new OfflineTransport();
   return new SocketTransport();
 }
 

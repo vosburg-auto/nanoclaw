@@ -10,6 +10,10 @@
 # is persisted at data/install-id so the bash + node halves of setup use
 # the same id and events from one install join into a single funnel.
 
+# Sourced, never executed, so it carries no shebang; the directive below names
+# the dialect instead. It really is bash, not sh: `local` is a bashism.
+# shellcheck shell=bash
+
 NANOCLAW_PH_KEY='phc_fx1Hhx9ucz8GuaJC8LVZWO8u03yXZZJJ6ObS4yplnaP'
 NANOCLAW_PH_URL='https://us.i.posthog.com/capture/'
 

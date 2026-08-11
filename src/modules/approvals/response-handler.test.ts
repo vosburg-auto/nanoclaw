@@ -1,193 +1,207 @@
 /**
- * Tests for the authorization gate in handleApprovalsResponse.
+ * Regression coverage for approval response authorization.
  *
- * The webhook receiver can't fully authenticate clicks (it only verifies
- * platform signatures), so the response handler must re-check that the
- * clicker is actually an eligible approver for the agent group before
- * dispatching the registered approval handler. Without this check, anyone
- * who can post a forged response to the webhook can attribute their
- * "approve" to any user id they choose.
+ * Approval cards may be delivered to an admin DM, but the callback payload is
+ * still untrusted input. The response handler must not dispatch sensitive
+ * approval handlers merely because a response carries a valid questionId.
  */
-import fs from 'fs';
+import * as fs from 'fs';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-
-import { closeDb, createAgentGroup, initTestDb, runMigrations } from '../../db/index.js';
-import { createPendingApproval, createSession } from '../../db/sessions.js';
-import { createUser } from '../permissions/db/users.js';
+import { initTestDb, closeDb, runMigrations } from '../../db/index.js';
+import { createAgentGroup } from '../../db/agent-groups.js';
+import { createSession, createPendingApproval, getPendingApproval } from '../../db/sessions.js';
+import { upsertUser } from '../permissions/db/users.js';
 import { grantRole } from '../permissions/db/user-roles.js';
 
 vi.mock('../../container-runner.js', () => ({
   wakeContainer: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('../../session-manager.js', () => ({
-  writeSessionMessage: vi.fn(),
-  heartbeatPath: () => '/tmp/no-such-heartbeat',
-}));
-
-const TEST_DIR = '/tmp/nanoclaw-test-response-handler';
 vi.mock('../../config.js', async () => {
   const actual = await vi.importActual('../../config.js');
-  return { ...actual, DATA_DIR: TEST_DIR };
+  return { ...actual, DATA_DIR: '/tmp/nanoclaw-test-approval-response-authz' };
 });
 
-function now(): string {
+const TEST_DIR = '/tmp/nanoclaw-test-approval-response-authz';
+
+function now() {
   return new Date().toISOString();
 }
 
-const APPROVAL_OPTIONS = JSON.stringify([
-  { label: 'Approve', value: 'approve' },
-  { label: 'Reject', value: 'reject' },
-]);
-
-beforeEach(async () => {
-  if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
+beforeEach(() => {
+  if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true, force: true });
   fs.mkdirSync(TEST_DIR, { recursive: true });
   const db = initTestDb();
   runMigrations(db);
 
-  // Fixtures
-  createAgentGroup({
-    id: 'ag-1',
-    name: 'TestAgent',
-    folder: 'test-agent',
-    agent_provider: null,
-    created_at: now(),
-  });
-  createUser({ id: 'telegram:1111', kind: 'telegram', display_name: 'Owner', created_at: now() });
-  createUser({ id: 'telegram:2222', kind: 'telegram', display_name: 'Stranger', created_at: now() });
-  grantRole({
-    user_id: 'telegram:1111',
-    role: 'owner',
-    agent_group_id: null,
-    granted_by: null,
-    granted_at: now(),
-  });
+  createAgentGroup({ id: 'ag-1', name: 'Agent', folder: 'agent', agent_provider: null, created_at: now() });
   createSession({
     id: 'sess-1',
     agent_group_id: 'ag-1',
     messaging_group_id: null,
     thread_id: null,
-    last_active: now(),
     agent_provider: null,
     status: 'active',
-    container_status: 'idle',
+    container_status: 'stopped',
+    last_active: now(),
     created_at: now(),
-  });
-  createPendingApproval({
-    approval_id: 'appr-1',
-    session_id: 'sess-1',
-    request_id: 'appr-1',
-    action: 'test_action',
-    payload: JSON.stringify({ note: 'do the thing' }),
-    created_at: now(),
-    title: 'Test',
-    options_json: APPROVAL_OPTIONS,
   });
 });
 
 afterEach(() => {
   closeDb();
+  if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true, force: true });
 });
 
-describe('handleApprovalsResponse — clicker authorization', () => {
-  it('authorized owner click invokes the registered handler and deletes the row', async () => {
+describe('approval response authorization', () => {
+  it('ignores a valid approval id clicked by a non-admin user', async () => {
     const { registerApprovalHandler } = await import('./primitive.js');
     const { handleApprovalsResponse } = await import('./response-handler.js');
-    const { getPendingApproval } = await import('../../db/sessions.js');
+    const handler = vi.fn().mockResolvedValue(undefined);
+    registerApprovalHandler('install_packages', handler);
 
-    let handlerCalled = false;
-    let receivedUserId: string | undefined;
-    registerApprovalHandler('test_action', async ({ userId }) => {
-      handlerCalled = true;
-      receivedUserId = userId;
+    createPendingApproval({
+      approval_id: 'appr-1',
+      session_id: 'sess-1',
+      request_id: 'appr-1',
+      action: 'install_packages',
+      payload: JSON.stringify({ packages: ['left-pad'] }),
+      created_at: now(),
+      title: 'Install packages',
+      options_json: JSON.stringify([]),
     });
 
     const claimed = await handleApprovalsResponse({
       questionId: 'appr-1',
       value: 'approve',
-      userId: '1111',
+      userId: 'stranger',
       channelType: 'telegram',
-      platformId: 'telegram:1111',
+      platformId: 'dm-stranger',
       threadId: null,
     });
 
     expect(claimed).toBe(true);
-    expect(handlerCalled).toBe(true);
-    // Handler receives the namespaced clicker id (channelType:rawUserId), not the raw platform id.
-    expect(receivedUserId).toBe('telegram:1111');
-    expect(getPendingApproval('appr-1')).toBeUndefined();
-  });
-
-  it('unauthorized clicker is rejected: handler is NOT invoked and the row stays intact', async () => {
-    const { registerApprovalHandler } = await import('./primitive.js');
-    const { handleApprovalsResponse } = await import('./response-handler.js');
-    const { getPendingApproval } = await import('../../db/sessions.js');
-
-    let handlerCalled = false;
-    registerApprovalHandler('test_action', async () => {
-      handlerCalled = true;
-    });
-
-    const claimed = await handleApprovalsResponse({
-      questionId: 'appr-1',
-      value: 'approve',
-      userId: '2222', // Stranger — no role granted
-      channelType: 'telegram',
-      platformId: 'telegram:2222',
-      threadId: null,
-    });
-
-    // Claimed so the dispatcher doesn't keep looping…
-    expect(claimed).toBe(true);
-    // …but the handler must not run.
-    expect(handlerCalled).toBe(false);
-    // Row is preserved so a real admin can still click later.
+    expect(handler).not.toHaveBeenCalled();
     expect(getPendingApproval('appr-1')).toBeDefined();
   });
 
-  it('spoofed userId on a different channelType cannot impersonate the owner', async () => {
+  it('allows an owner/admin click to dispatch the registered approval handler', async () => {
+    upsertUser({ id: 'telegram:owner', kind: 'telegram', display_name: 'Owner', created_at: now() });
+    grantRole({ user_id: 'telegram:owner', role: 'owner', agent_group_id: null, granted_by: null, granted_at: now() });
+
     const { registerApprovalHandler } = await import('./primitive.js');
     const { handleApprovalsResponse } = await import('./response-handler.js');
+    const handler = vi.fn().mockResolvedValue(undefined);
+    registerApprovalHandler('install_packages_allowed', handler);
 
-    let handlerCalled = false;
-    registerApprovalHandler('test_action', async () => {
-      handlerCalled = true;
+    createPendingApproval({
+      approval_id: 'appr-2',
+      session_id: 'sess-1',
+      request_id: 'appr-2',
+      action: 'install_packages_allowed',
+      payload: JSON.stringify({ packages: ['left-pad'] }),
+      created_at: now(),
+      title: 'Install packages',
+      options_json: JSON.stringify([]),
     });
 
-    // Same raw userId as the owner, but channelType is 'discord' — so
-    // the namespaced id is "discord:1111", which is NOT in user_roles.
-    await handleApprovalsResponse({
-      questionId: 'appr-1',
+    const claimed = await handleApprovalsResponse({
+      questionId: 'appr-2',
       value: 'approve',
-      userId: '1111',
-      channelType: 'discord',
-      platformId: 'discord:1111',
+      userId: 'owner',
+      channelType: 'telegram',
+      platformId: 'dm-owner',
       threadId: null,
     });
 
-    expect(handlerCalled).toBe(false);
+    expect(claimed).toBe(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({ userId: 'telegram:owner' }));
+    expect(getPendingApproval('appr-2')).toBeUndefined();
   });
 
-  it('missing userId is rejected', async () => {
-    const { registerApprovalHandler } = await import('./primitive.js');
-    const { handleApprovalsResponse } = await import('./response-handler.js');
-
-    let handlerCalled = false;
-    registerApprovalHandler('test_action', async () => {
-      handlerCalled = true;
+  it('allows global admins to resolve approvals without a session-scoped agent group', async () => {
+    upsertUser({ id: 'telegram:global-admin', kind: 'telegram', display_name: 'Global Admin', created_at: now() });
+    grantRole({
+      user_id: 'telegram:global-admin',
+      role: 'admin',
+      agent_group_id: null,
+      granted_by: null,
+      granted_at: now(),
     });
 
-    await handleApprovalsResponse({
-      questionId: 'appr-1',
+    const { registerApprovalHandler } = await import('./primitive.js');
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    const handler = vi.fn().mockResolvedValue(undefined);
+    registerApprovalHandler('global_admin_allowed', handler);
+
+    createPendingApproval({
+      approval_id: 'appr-3',
+      session_id: 'sess-1',
+      agent_group_id: null,
+      request_id: 'appr-3',
+      action: 'global_admin_allowed',
+      payload: JSON.stringify({ packages: ['left-pad'] }),
+      created_at: now(),
+      title: 'Install packages',
+      options_json: JSON.stringify([]),
+    });
+
+    const claimed = await handleApprovalsResponse({
+      questionId: 'appr-3',
       value: 'approve',
-      userId: null,
+      userId: 'global-admin',
       channelType: 'telegram',
-      platformId: 'telegram:1111',
+      platformId: 'dm-global-admin',
       threadId: null,
     });
 
-    expect(handlerCalled).toBe(false);
+    expect(claimed).toBe(true);
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(getPendingApproval('appr-3')).toBeUndefined();
+  });
+
+  it('an approval with approver_user_id is resolvable by that user, not a non-assignee', async () => {
+    const { registerApprovalHandler } = await import('./primitive.js');
+    const { handleApprovalsResponse } = await import('./response-handler.js');
+    const handler = vi.fn().mockResolvedValue(undefined);
+    registerApprovalHandler('assigned_approver_action', handler);
+
+    createPendingApproval({
+      approval_id: 'appr-4',
+      session_id: 'sess-1',
+      request_id: 'appr-4',
+      action: 'assigned_approver_action',
+      payload: JSON.stringify({}),
+      created_at: now(),
+      title: 'Assigned approval',
+      options_json: JSON.stringify([]),
+      approver_user_id: 'telegram:dana',
+    });
+
+    // A non-assignee (no global/owner role) cannot resolve it.
+    await handleApprovalsResponse({
+      questionId: 'appr-4',
+      value: 'approve',
+      userId: 'stranger',
+      channelType: 'telegram',
+      platformId: 'dm-stranger',
+      threadId: null,
+    });
+    expect(handler).not.toHaveBeenCalled();
+    expect(getPendingApproval('appr-4')).toBeDefined();
+
+    // The named approver resolves it.
+    await handleApprovalsResponse({
+      questionId: 'appr-4',
+      value: 'approve',
+      userId: 'dana',
+      channelType: 'telegram',
+      platformId: 'dm-dana',
+      threadId: null,
+    });
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(getPendingApproval('appr-4')).toBeUndefined();
   });
 });

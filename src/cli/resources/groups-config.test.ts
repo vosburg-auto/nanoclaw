@@ -87,6 +87,14 @@ describe('groups config update --auto-compact-window', () => {
       const resp = await configUpdate({ 'auto-compact-window': bad });
       expect(resp.ok).toBe(false);
     }
+    // A flag with no following value: src/cli/client.ts stores `true`, and
+    // `Number(true) === 1` passes an isInteger/positive check — so a bare
+    // `--auto-compact-window` used to write a 1-token window, making the group
+    // compact on every turn after a restart.
+    for (const bad of [true, '', '   ']) {
+      const resp = await configUpdate({ 'auto-compact-window': bad });
+      expect(resp.ok, String(bad)).toBe(false);
+    }
     // Row untouched throughout.
     expect(getContainerConfig(GID)!.auto_compact_window).toBeNull();
     // Sanity: the DB default is genuinely NULL, so a fresh group inherits the
@@ -115,11 +123,18 @@ describe('groups config update --auto-compact-window', () => {
       packages_npm: '[]',
       additional_mounts: '[]',
       cli_scope: 'global',
+      timezone: 'Asia/Tokyo',
       auto_compact_window: 450000,
       updated_at: now(),
     });
     const row = getContainerConfig(GID2)!;
     expect(row.cli_scope).toBe('global');
     expect(row.auto_compact_window).toBe(450000);
+    // `timezone` must be bound NON-null and asserted: with `timezone: null` and
+    // no read-back, this test passes even when the column is missing from the
+    // INSERT's column list — which is exactly the silent-drop hazard the
+    // comment above describes. createContainerConfig runs at host startup via
+    // src/backfill-container-configs.ts.
+    expect(row.timezone).toBe('Asia/Tokyo');
   });
 });

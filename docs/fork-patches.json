@@ -1,0 +1,512 @@
+{
+  "_doc": "Authoritative dispositions for this fork's patch surface. The QUERY in scripts/fork-surface.mjs is the authority on WHICH paths are fork-modified; this file carries only what the query cannot know: intent, disposition, and the command that goes red if the patch is reverted. `node scripts/fork-surface.mjs check` fails when the two disagree in either direction. Do NOT hand-maintain a parallel table in prose.",
+  "upstream_remote": "upstream",
+  "patches": [
+    {
+      "path": ".github/workflows/ci.yml",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Runs the fork-surface manifest check and the guard-liveness job.",
+      "guard_waiver": "Not guardable from inside the repo: a check that runs IN CI cannot detect its own removal FROM CI. fork-guard-liveness.mjs correctly reported the previous guard as INERT. The real control is out-of-repo — make the `ci` and `fork-guard-liveness` JOB contexts REQUIRED status checks (job names, per the check-runs API — NOT the step display names, which never report and would block main permanently) on the branch ruleset, so deleting them from this file leaves the checks unreported and the PR unmergeable. Until that is configured, this patch is genuinely unprotected; recorded rather than papered over with a check that cannot fail."
+    },
+    {
+      "path": ".gitignore",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Fork-local ignore entries.",
+      "guard_waiver": "Combine on sync; no behavioural guard is meaningful."
+    },
+    {
+      "path": "CHANGELOG.md",
+      "kind": "doc",
+      "status": "carried",
+      "intent": "Fork release notes under '### Fork (vosburg-auto)' plus the [fork-sync] sections.",
+      "guard_waiver": "Prose; taking upstream's file wholesale wipes fork history."
+    },
+    {
+      "path": "bin/ncl",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Resolve the checkout's own tsx before pnpm, so the CLI works on hosts with deps installed but no pnpm on PATH.",
+      "guard": "pnpm exec vitest run src/cli/ncl-launcher.test.ts"
+    },
+    {
+      "path": "container/Dockerfile",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Bake ffmpeg, gh, openssh-client and jq into the agent image.",
+      "guard": "grep -q openssh-client container/Dockerfile"
+    },
+    {
+      "path": "container/agent-runner/src/config.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). Reads autoCompactWindow out of container.json.",
+      "guard": "pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit"
+    },
+    {
+      "path": "container/agent-runner/src/fork-provider-options.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the auto-compact pass-through wiring in index.ts against a whole-file revert."
+    },
+    {
+      "path": "container/agent-runner/src/fork-provider-options.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Compile-time guard making the auto-compact pass-through in index.ts mandatory.",
+      "guard": "cd container/agent-runner && bun test src/fork-provider-options.test.ts"
+    },
+    {
+      "path": "container/agent-runner/src/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). Passes the value into ProviderOptions - the single line the whole feature hangs on.",
+      "guard": "cd container/agent-runner && bun test src/fork-provider-options.test.ts"
+    },
+    {
+      "path": "container/agent-runner/src/providers/claude-auto-compact.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards resolveAutoCompactWindow precedence: per-group > env > built-in default."
+    },
+    {
+      "path": "container/agent-runner/src/providers/claude.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). resolveAutoCompactWindow and its precedence contract.",
+      "guard": "cd container/agent-runner && bun test src/providers/claude-auto-compact.test.ts"
+    },
+    {
+      "path": "container/agent-runner/src/providers/types.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The autoCompactWindow field on ProviderOptions.",
+      "guard": "pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit"
+    },
+    {
+      "path": "container/skills/context-awareness/SKILL.md",
+      "kind": "doc",
+      "status": "carried",
+      "intent": "Fork-authored container skill.",
+      "guard_waiver": "Fork-owned document; upstream cannot silently replace it."
+    },
+    {
+      "path": "container/skills/gemini-companion/SKILL.md",
+      "kind": "doc",
+      "status": "carried",
+      "intent": "Fork-authored container skill.",
+      "guard_waiver": "Fork-owned document."
+    },
+    {
+      "path": "container/skills/opus-escalation/SKILL.md",
+      "kind": "doc",
+      "status": "carried",
+      "intent": "Fork-authored container skill.",
+      "guard_waiver": "Fork-owned document."
+    },
+    {
+      "path": "docs/BRANCH-FORK-MAINTENANCE.md",
+      "kind": "doc",
+      "status": "carried",
+      "intent": "Fork maintenance procedure; points at this manifest and scripts/fork-surface.mjs.",
+      "guard_waiver": "Prose."
+    },
+    {
+      "path": "docs/fork-patches.json",
+      "kind": "config",
+      "status": "carried",
+      "intent": "This manifest: intent, disposition and guard for every fork patch.",
+      "guard_waiver": "Self-referential; `node scripts/fork-surface.mjs check` is its guard and runs in CI."
+    },
+    {
+      "path": "docs/lockfile-waivers.json",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Records intentional dependency downgrades, with a reason each. Empty is the correct steady state.",
+      "guard_waiver": "Deleting this file makes the check STRICTER, not weaker: loadWaivers() treats an absent file as zero waivers, so every downgrade is reported. Its absence therefore cannot hide a regression, and there is no failure mode to guard against. A guard here would be ceremony that reports safety it does not provide — the thing fork-guard-liveness.mjs exists to prevent."
+    },
+    {
+      "path": "docs/upgrade-recovery.md",
+      "kind": "doc",
+      "status": "carried",
+      "intent": "Documents the offline path out of the upgrade deadlock (offline-migrate.ts + NANOCLAW_OFFLINE ncl), and states why offline ncl is not a privilege change. Also: Documents the ~30s pause before the tripwire exits, so an operator does not read the wait as a hang.",
+      "guard_waiver": "Prose. The behavior it describes is guarded by src/cli/offline-transport.test.ts; a doc guard would assert that a file contains sentences."
+    },
+    {
+      "path": "migrate-v2.sh",
+      "kind": "source",
+      "status": "carried",
+      "intent": "ShellCheck SC1073 fix - rationale moved off the directive line.",
+      "guard": "shellcheck -S error migrate-v2.sh"
+    },
+    {
+      "path": "package.json",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Re-adds @chat-adapter/telegram at upstream's exact pin; adds the fork-surface scripts.",
+      "guard": "node -e \"process.exit(require('./package.json').dependencies['@chat-adapter/telegram']?0:1)\""
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "kind": "generated",
+      "status": "carried",
+      "intent": "Lockfile for the fork's extra dependency.",
+      "guard_waiver": "Generated by pnpm install; guarded transitively via package.json."
+    },
+    {
+      "path": "scripts/fork-guard-liveness.mjs",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Reverts each carried patch to upstream and requires its guard to go red.",
+      "guard": "node scripts/fork-guard-liveness.mjs --list"
+    },
+    {
+      "path": "scripts/fork-guard-liveness.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins the liveness verdict (broken/inert/live) and target selection, so an inverted verdict cannot ship silently."
+    },
+    {
+      "path": "scripts/fork-surface.mjs",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Derives the fork patch surface by blob membership and checks it against the manifest.",
+      "guard": "node scripts/fork-surface.mjs check"
+    },
+    {
+      "path": "scripts/fork-surface.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins the manifest<->query reconciliation: both staleness directions, the superseded exemption, and the guard-or-waiver rule."
+    },
+    {
+      "path": "scripts/lockfile-regressions.mjs",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Fails when a ref resolves a dependency LOWER than main does — the class fork-surface.mjs structurally cannot see, because it decides path ownership by blob and has no opinion about versions inside a dispositioned file. Caught live: PR #7's postcss 8.5.10 -> 8.5.25 security bump would have been silently reverted by this sync.",
+      "guard": "pnpm exec vitest run scripts/lockfile-regressions.test.ts"
+    },
+    {
+      "path": "scripts/lockfile-regressions.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Covers the downgrade decision: numeric (not lexical) version ordering, peer-suffix stripping, max-of-duplicates, prerelease ordering, the dropped-dependency exemption, and per-package waivers.",
+      "guard": "pnpm exec vitest run scripts/lockfile-regressions.test.ts"
+    },
+    {
+      "path": "scripts/offline-migrate.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins appliedNames() error discrimination: only a missing table reads as a fresh DB; SQLITE_BUSY and permission errors must throw, not report zero applied."
+    },
+    {
+      "path": "scripts/offline-migrate.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Operator entry point that runs the central-DB schema migrations with no host process. Enforces the same host-not-running and DB-privacy preconditions as the offline transport — more load-bearing here, since this path runs the destructive migration 016. Deliberately does NOT stamp the upgrade marker.",
+      "guard": "pnpm exec vitest run scripts/offline-migrate.test.ts"
+    },
+    {
+      "path": "setup/env-secret-callers.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards that set-env.ts and timezone.ts route .env writes through writeSecretEnvFile."
+    },
+    {
+      "path": "setup/env-utils.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the 0600 mode on .env."
+    },
+    {
+      "path": "setup/env-utils.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "writeSecretEnvFile - writes .env at 0600 and repairs legacy 0644 in place.",
+      "guard": "pnpm exec vitest run setup/env-utils.test.ts"
+    },
+    {
+      "path": "setup/lib/channels-remote.sh",
+      "kind": "source",
+      "status": "carried",
+      "intent": "ShellCheck SC2148 fix - shell directive on a sourced library.",
+      "guard": "shellcheck -S error setup/lib/channels-remote.sh"
+    },
+    {
+      "path": "setup/lib/diagnostics.sh",
+      "kind": "source",
+      "status": "carried",
+      "intent": "ShellCheck SC2148 fix.",
+      "guard": "shellcheck -S error setup/lib/diagnostics.sh"
+    },
+    {
+      "path": "setup/lib/install-slug.sh",
+      "kind": "source",
+      "status": "carried",
+      "intent": "ShellCheck SC2148 fix.",
+      "guard": "shellcheck -S error setup/lib/install-slug.sh"
+    },
+    {
+      "path": "setup/set-env.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Routes the .env write through writeSecretEnvFile instead of bare fs.writeFileSync.",
+      "guard": "pnpm exec vitest run setup/env-secret-callers.test.ts"
+    },
+    {
+      "path": "setup/timezone.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Routes both .env writes through writeSecretEnvFile.",
+      "guard": "pnpm exec vitest run setup/env-secret-callers.test.ts"
+    },
+    {
+      "path": "src/backfill-container-configs.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). Seeds the column on backfill.",
+      "guard": "pnpm exec tsc --noEmit"
+    },
+    {
+      "path": "src/channels/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Barrel import of ./telegram.js - upstream keeps telegram on its channels branch, not main.",
+      "guard": "pnpm exec vitest run src/channels/telegram-registration.test.ts"
+    },
+    {
+      "path": "src/channels/telegram-allowed-updates.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins the long-polling update set against the adapter actually constructed at boot."
+    },
+    {
+      "path": "src/channels/telegram.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "TELEGRAM_ALLOWED_UPDATES: callback_query carries approval clicks, message_reaction carries reactions.",
+      "guard": "pnpm exec vitest run src/channels/telegram-allowed-updates.test.ts"
+    },
+    {
+      "path": "src/cli/client.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "One-branch seam in pickTransport(): NANOCLAW_OFFLINE routes ncl through OfflineTransport instead of the socket. The whole runtime effect of offline mode hangs on this branch, so the guard asserts it at source level (client.ts self-executes main() and cannot be imported into a test).",
+      "guard": "npx vitest run src/cli/offline-transport.test.ts"
+    },
+    {
+      "path": "src/cli/ncl-launcher.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Pins bin/ncl's runner resolution order."
+    },
+    {
+      "path": "src/cli/offline-transport-unwind.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Proves open() closes the handle it opened when ensurePrivateDb or runMigrations throws, observed via a mocked closeDb."
+    },
+    {
+      "path": "src/cli/offline-transport.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Mutation-checked guard for the offline transport. Fork-owned filename on purpose — src/cli/client.test.ts is a name upstream owns, and a wholesale take of such a file deletes feature and detector together (the v2.1.54 lesson).",
+      "guard": "npx vitest run src/cli/offline-transport.test.ts"
+    },
+    {
+      "path": "src/cli/offline-transport.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Offline `ncl` transport: dispatch in-process against data/v2.db so the upgrade runbook can run `ncl groups list` / `ncl tasks pause` before the host is allowed to boot. Without it the sanctioned order is unreachable — /migrate-memory needs ncl, ncl needs the host, the host needs the upgrade marker, and the marker must be stamped LAST.",
+      "guard": "npx vitest run src/cli/offline-transport.test.ts"
+    },
+    {
+      "path": "src/cli/resources/groups-config.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the numeric-flag parser and the container_configs INSERT column list."
+    },
+    {
+      "path": "src/cli/resources/groups.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "parsePositiveIntFlag - rejects a valueless numeric flag (Number(true) === 1).",
+      "guard": "pnpm exec vitest run src/cli/resources/groups-config.test.ts"
+    },
+    {
+      "path": "src/cli/transport.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Adds an optional close() to the transport interface so the offline SQLite handle is released before exit. TYPE-LEVEL patch: guarded by tsc, not by a runtime test — types are erased at runtime, so a vitest guard passes with the interface reverted and reports safety it does not provide.",
+      "guard": "pnpm exec tsc --noEmit"
+    },
+    {
+      "path": "src/container-config.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). Materializes autoCompactWindow into container.json.",
+      "guard": "pnpm exec vitest run src/db/db-v2.test.ts src/cli/resources/groups-config.test.ts"
+    },
+    {
+      "path": "src/container-runtime.host-gateway.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards hostGatewayArgs, in a fork-owned filename."
+    },
+    {
+      "path": "src/container-runtime.test.ts",
+      "kind": "source",
+      "status": "superseded",
+      "intent": "Formerly fork-modified.",
+      "superseded_reason": "Fork cases moved to the fork-owned container-runtime.host-gateway.test.ts; this file is upstream's again by design."
+    },
+    {
+      "path": "src/container-runtime.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "NANOCLAW_HOST_GATEWAY_IP - point host.docker.internal at a remote host.",
+      "guard": "pnpm exec vitest run src/container-runtime.host-gateway.test.ts"
+    },
+    {
+      "path": "src/db/container-configs.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). Column allowlist and INSERT column list.",
+      "guard": "pnpm exec vitest run src/db/db-v2.test.ts src/cli/resources/groups-config.test.ts"
+    },
+    {
+      "path": "src/db/db-v2.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Fork-sync upgrade-path tests for the renumbered migration."
+    },
+    {
+      "path": "src/db/migrations/016-auto-compact-window.ts",
+      "kind": "source",
+      "status": "superseded",
+      "intent": "Formerly fork-modified.",
+      "superseded_reason": "Renumbered out of upstream's range to fork-auto-compact-window.ts in the v2.1.54 sync."
+    },
+    {
+      "path": "src/db/migrations/fork-auto-compact-window.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The migration; `name` is the schema_version key and must not drift.",
+      "guard": "pnpm exec vitest run src/db/db-v2.test.ts src/cli/resources/groups-config.test.ts"
+    },
+    {
+      "path": "src/db/migrations/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). Registers the fork migration in the barrel.",
+      "guard": "pnpm exec vitest run src/db/db-v2.test.ts src/cli/resources/groups-config.test.ts"
+    },
+    {
+      "path": "src/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Startup ordering: the upgrade tripwire runs BEFORE the restart-backoff counter, so a deterministic refusal to start is not recorded as a crash.",
+      "guard": "pnpm exec vitest run src/startup-order.test.ts"
+    },
+    {
+      "path": "src/modules/approvals/approval-id.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards id entropy and the callback_data budget."
+    },
+    {
+      "path": "src/modules/approvals/approval-id.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "128-bit CSPRNG approval ids, in one fork-owned module instead of two hunks.",
+      "guard": "pnpm exec vitest run src/modules/approvals/approval-id.test.ts"
+    },
+    {
+      "path": "src/modules/approvals/onecli-approvals.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the OneCLI card id shape and entropy."
+    },
+    {
+      "path": "src/modules/approvals/onecli-approvals.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "shortApprovalId delegates to the fork's approval-id module.",
+      "guard": "pnpm exec vitest run src/modules/approvals/onecli-approvals.test.ts"
+    },
+    {
+      "path": "src/modules/approvals/primitive.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards delivery-failure cleanup and that approval ids come from the fork CSPRNG generator."
+    },
+    {
+      "path": "src/modules/approvals/primitive.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Approval ids delegate to the fork's approval-id module; the 'ap' prefix keeps the id inside the 64-byte callback_data budget.",
+      "guard": "pnpm exec vitest run src/modules/approvals/primitive.test.ts"
+    },
+    {
+      "path": "src/modules/approvals/response-handler.test.ts",
+      "kind": "source",
+      "status": "superseded",
+      "intent": "Formerly fork-modified.",
+      "superseded_reason": "Superseded with its source, same reason."
+    },
+    {
+      "path": "src/modules/approvals/response-handler.ts",
+      "kind": "source",
+      "status": "superseded",
+      "intent": "Formerly fork-modified.",
+      "superseded_reason": "Upstream advanced past the fork here (reason-capture, isAuthorizedApprovalClick). Verified by grep that the fork carried no edits of its own."
+    },
+    {
+      "path": "src/startup-order.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards that the upgrade tripwire precedes the restart-backoff counter."
+    },
+    {
+      "path": "src/types.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The auto_compact_window field on ContainerConfigRow.",
+      "guard": "pnpm exec tsc --noEmit"
+    },
+    {
+      "path": "src/upgrade-state.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the tripwire exit delay — a regression is otherwise silent, since the process still exits 1, just instantly."
+    },
+    {
+      "path": "src/upgrade-state.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Adds TRIPWIRE_EXIT_DELAY_MS: the tripwire throttles its own exit, because running before the circuit breaker means the breaker cannot throttle it.",
+      "guard": "pnpm exec vitest run src/upgrade-state.test.ts"
+    },
+    {
+      "path": "src/webhook-server.bind.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the loopback default, in a fork-owned filename."
+    },
+    {
+      "path": "src/webhook-server.test.ts",
+      "kind": "source",
+      "status": "superseded",
+      "intent": "Formerly fork-modified.",
+      "superseded_reason": "Fork bind cases moved to the fork-owned webhook-server.bind.test.ts; this file is upstream's again by design."
+    },
+    {
+      "path": "src/webhook-server.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Loopback bind by default with WEBHOOK_BIND as the opt-in.",
+      "guard": "pnpm exec vitest run src/webhook-server.bind.test.ts"
+    }
+  ]
+}

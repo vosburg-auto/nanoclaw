@@ -14,16 +14,27 @@
 #
 # Explicit override: set NANOCLAW_CHANNELS_REMOTE=<name> to skip detection.
 
+# Sourced, never executed, so it carries no shebang; the directive below names
+# the dialect instead. It really is bash, not sh: `local` and the `< <(...)`
+# process substitution are both bashisms.
+# (Keep prose off a line that starts with the directive keyword — such a line is
+# parsed as a directive and errors out, SC1073.)
+# shellcheck shell=bash
+
 resolve_channels_remote() {
   if [ -n "${NANOCLAW_CHANNELS_REMOTE:-}" ]; then
     printf '%s' "$NANOCLAW_CHANNELS_REMOTE"
     return 0
   fi
 
+  # Anchor the repo-name tail: the pattern must match the nanoclaw repo itself,
+  # never a sibling channel repo like qwibitai/nanoclaw-discord (which carries
+  # no channels branch — an unanchored `*nanoclaw*` glob picked those on
+  # multi-remote machines and broke every from-branch copy).
   local remote url
   while IFS=$'\t' read -r remote url; do
     case "$url" in
-      *qwibitai/nanoclaw*|*nanocoai/nanoclaw*)
+      *qwibitai/nanoclaw|*qwibitai/nanoclaw.git|*nanocoai/nanoclaw|*nanocoai/nanoclaw.git)
         printf '%s' "$remote"
         return 0
         ;;

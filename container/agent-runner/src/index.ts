@@ -26,7 +26,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 import { loadConfig } from './config.js';
+import { forkProviderOptions } from './fork-provider-options.js';
 import { buildSystemPromptAddendum } from './destinations.js';
+import { getTaskSeriesId } from './db/session-routing.js';
+import { ensureMemoryScaffold } from './memory/scaffold.js';
+import { MEMORY_SESSION_HOOK } from './memory/session-hook.js';
 // Providers barrel — each enabled provider self-registers on import.
 // Provider skills append imports to providers/index.ts.
 import './providers/index.js';
@@ -45,13 +49,21 @@ async function main(): Promise<void> {
 
   log(`Starting v2 agent-runner (provider: ${providerName})`);
 
+  // Every provider shares one persistent memory tree. Legacy imports are an
+  // operator-run migration and never happen in this normal startup path.
+  ensureMemoryScaffold();
+
   // Runtime-generated system-prompt addendum: agent identity (name) plus
   // the live destinations map. Everything else (capabilities, per-module
   // instructions, per-channel formatting) is loaded by Claude Code from
   // /workspace/agent/CLAUDE.md — the composed entry imports the shared
-  // base (/app/CLAUDE.md) and each enabled module's fragment. Per-group
-  // memory lives in /workspace/agent/CLAUDE.local.md (auto-loaded).
-  const instructions = buildSystemPromptAddendum(config.assistantName || undefined);
+  // base (/app/CLAUDE.md) and each enabled module's fragment. Memory is
+  // supplied separately by each provider's native lifecycle hook.
+  const taskId = getTaskSeriesId();
+  const instructions = buildSystemPromptAddendum(
+    config.assistantName || undefined,
+    taskId ? { kind: 'task', taskId } : { kind: 'chat' },
+  );
 
   // Discover additional directories mounted at /workspace/extra/*
   const additionalDirectories: string[] = [];
@@ -86,15 +98,23 @@ async function main(): Promise<void> {
     log(`Additional MCP server: ${name} (${serverConfig.command})`);
   }
 
-  const provider = createProvider(providerName, {
-    assistantName: config.assistantName || undefined,
-    mcpServers,
-    env: { ...process.env },
-    additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
-    model: config.model,
-    effort: config.effort,
-    autoCompactWindow: config.autoCompactWindow,
-  });
+  // forkProviderOptions() is a typed identity: it makes `autoCompactWindow`
+  // mandatory here, so deleting the fork's pass-through is a compile error
+  // rather than a silent fallback to the provider default. See
+  // src/fork-provider-options.ts.
+  const provider = createProvider(
+    providerName,
+    forkProviderOptions({
+      assistantName: config.assistantName || undefined,
+      mcpServers,
+      env: { ...process.env },
+      additionalDirectories: additionalDirectories.length > 0 ? additionalDirectories : undefined,
+      model: config.model,
+      effort: config.effort,
+      autoCompactWindow: config.autoCompactWindow,
+    }),
+  );
+  provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
 
   await runPollLoop({
     provider,

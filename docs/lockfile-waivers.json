@@ -1,0 +1,4 @@
+{
+  "$comment": "Intentional dependency downgrades, checked by scripts/lockfile-regressions.mjs. Empty is the correct steady state: a waiver here suppresses a real signal, so each one needs a reason a reviewer can act on. Prefer merging main into the branch to carry a bump across.",
+  "waivers": []
+}
