@@ -7,7 +7,7 @@
       "kind": "config",
       "status": "carried",
       "intent": "Runs the fork-surface manifest check and the guard-liveness job.",
-      "guard_waiver": "Not guardable from inside the repo: a check that runs IN CI cannot detect its own removal FROM CI. fork-guard-liveness.mjs correctly reported the previous guard as INERT. The real control is out-of-repo \u2014 make `Fork surface matches manifest` and `Fork guards are live` REQUIRED status checks on the branch ruleset, so deleting them from this file leaves the checks unreported and the PR unmergeable. Until that is configured, this patch is genuinely unprotected; recorded rather than papered over with a check that cannot fail."
+      "guard_waiver": "Not guardable from inside the repo: a check that runs IN CI cannot detect its own removal FROM CI. fork-guard-liveness.mjs correctly reported the previous guard as INERT. The real control is out-of-repo — make the `ci` and `fork-guard-liveness` JOB contexts REQUIRED status checks (job names, per the check-runs API — NOT the step display names, which never report and would block main permanently) on the branch ruleset, so deleting them from this file leaves the checks unreported and the PR unmergeable. Until that is configured, this patch is genuinely unprotected; recorded rather than papered over with a check that cannot fail."
     },
     {
       "path": ".gitignore",
@@ -120,6 +120,13 @@
       "guard_waiver": "Self-referential; `node scripts/fork-surface.mjs check` is its guard and runs in CI."
     },
     {
+      "path": "docs/lockfile-waivers.json",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Records intentional dependency downgrades, with a reason each. Empty is the correct steady state.",
+      "guard_waiver": "Deleting this file makes the check STRICTER, not weaker: loadWaivers() treats an absent file as zero waivers, so every downgrade is reported. Its absence therefore cannot hide a regression, and there is no failure mode to guard against. A guard here would be ceremony that reports safety it does not provide — the thing fork-guard-liveness.mjs exists to prevent."
+    },
+    {
       "path": "docs/upgrade-recovery.md",
       "kind": "doc",
       "status": "carried",
@@ -174,6 +181,20 @@
       "intent": "Pins the manifest<->query reconciliation: both staleness directions, the superseded exemption, and the guard-or-waiver rule."
     },
     {
+      "path": "scripts/lockfile-regressions.mjs",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Fails when a ref resolves a dependency LOWER than main does — the class fork-surface.mjs structurally cannot see, because it decides path ownership by blob and has no opinion about versions inside a dispositioned file. Caught live: PR #7's postcss 8.5.10 -> 8.5.25 security bump would have been silently reverted by this sync.",
+      "guard": "pnpm exec vitest run scripts/lockfile-regressions.test.ts"
+    },
+    {
+      "path": "scripts/lockfile-regressions.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Covers the downgrade decision: numeric (not lexical) version ordering, peer-suffix stripping, max-of-duplicates, prerelease ordering, the dropped-dependency exemption, and per-package waivers.",
+      "guard": "pnpm exec vitest run scripts/lockfile-regressions.test.ts"
+    },
+    {
       "path": "scripts/offline-migrate.test.ts",
       "kind": "test",
       "status": "carried",
@@ -183,7 +204,7 @@
       "path": "scripts/offline-migrate.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Operator entry point that runs the central-DB schema migrations with no host process. Enforces the same host-not-running and DB-privacy preconditions as the offline transport \u2014 more load-bearing here, since this path runs the destructive migration 016. Deliberately does NOT stamp the upgrade marker.",
+      "intent": "Operator entry point that runs the central-DB schema migrations with no host process. Enforces the same host-not-running and DB-privacy preconditions as the offline transport — more load-bearing here, since this path runs the destructive migration 016. Deliberately does NOT stamp the upgrade marker.",
       "guard": "pnpm exec vitest run scripts/offline-migrate.test.ts"
     },
     {
@@ -290,14 +311,14 @@
       "path": "src/cli/offline-transport.test.ts",
       "kind": "test",
       "status": "carried",
-      "intent": "Mutation-checked guard for the offline transport. Fork-owned filename on purpose \u2014 src/cli/client.test.ts is a name upstream owns, and a wholesale take of such a file deletes feature and detector together (the v2.1.54 lesson).",
+      "intent": "Mutation-checked guard for the offline transport. Fork-owned filename on purpose — src/cli/client.test.ts is a name upstream owns, and a wholesale take of such a file deletes feature and detector together (the v2.1.54 lesson).",
       "guard": "npx vitest run src/cli/offline-transport.test.ts"
     },
     {
       "path": "src/cli/offline-transport.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Offline `ncl` transport: dispatch in-process against data/v2.db so the upgrade runbook can run `ncl groups list` / `ncl tasks pause` before the host is allowed to boot. Without it the sanctioned order is unreachable \u2014 /migrate-memory needs ncl, ncl needs the host, the host needs the upgrade marker, and the marker must be stamped LAST.",
+      "intent": "Offline `ncl` transport: dispatch in-process against data/v2.db so the upgrade runbook can run `ncl groups list` / `ncl tasks pause` before the host is allowed to boot. Without it the sanctioned order is unreachable — /migrate-memory needs ncl, ncl needs the host, the host needs the upgrade marker, and the marker must be stamped LAST.",
       "guard": "npx vitest run src/cli/offline-transport.test.ts"
     },
     {
@@ -317,7 +338,7 @@
       "path": "src/cli/transport.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Adds an optional close() to the transport interface so the offline SQLite handle is released before exit. TYPE-LEVEL patch: guarded by tsc, not by a runtime test \u2014 types are erased at runtime, so a vitest guard passes with the interface reverted and reports safety it does not provide.",
+      "intent": "Adds an optional close() to the transport interface so the offline SQLite handle is released before exit. TYPE-LEVEL patch: guarded by tsc, not by a runtime test — types are erased at runtime, so a vitest guard passes with the interface reverted and reports safety it does not provide.",
       "guard": "pnpm exec tsc --noEmit"
     },
     {
@@ -458,7 +479,7 @@
       "path": "src/upgrade-state.test.ts",
       "kind": "test",
       "status": "carried",
-      "intent": "Guards the tripwire exit delay \u2014 a regression is otherwise silent, since the process still exits 1, just instantly."
+      "intent": "Guards the tripwire exit delay — a regression is otherwise silent, since the process still exits 1, just instantly."
     },
     {
       "path": "src/upgrade-state.ts",

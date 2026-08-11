@@ -35,6 +35,15 @@ jobs:
       - name: Fork surface matches manifest
         run: pnpm run fork:check
 
+      # fork:check proves pnpm-lock.yaml is DISPOSITIONED; it has no opinion
+      # about the versions inside it. A sync that takes upstream's lockfile
+      # wholesale gives back every dependency bump merged since the last sync,
+      # and nothing else here would notice. See scripts/lockfile-regressions.mjs.
+      - name: No dependency downgrades vs main
+        run: |
+          git fetch origin main --quiet
+          node scripts/lockfile-regressions.mjs --base origin/main
+
       - name: Format check
         run: pnpm run format:check
 
