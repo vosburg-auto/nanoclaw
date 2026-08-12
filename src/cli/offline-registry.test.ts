@@ -8,13 +8,18 @@
  * (caller context, migrate default, unwind) — but it means the registry is never
  * consulted there, so it could not see that the registry was EMPTY. Offline
  * `ncl` shipped inert: `NANOCLAW_OFFLINE=1 ncl groups list` returned
- * `unknown-command` for every command on the deployed host, with a green suite
- * and five review passes behind it. A mock that stands in for the exact
- * component whose absence is the bug cannot detect the bug.
+ * `unknown-command` for every command on the deployed host. Five review passes
+ * ran on the PR that introduced it, but they never converged — it was merged
+ * over Request-changes / Broken verdicts as a stated exception, so "the panel
+ * missed it" is only half true.
+ *
+ * The half that IS a blind spot: a mock standing in for the exact component
+ * whose absence is the bug cannot detect the bug.
  *
  * So this file uses the REAL dispatch against a REAL temporary database. Delete
- * the `loadCommands()` call from `sendFrame` and this goes red with
- * `unknown-command`, which is the production symptom verbatim.
+ * the `loadCommands()` call from `sendFrame` and both cases below go red — the
+ * first with the literal `unknown-command` code, which is the production symptom
+ * verbatim; the second with the registry count collapsing to zero.
  */
 import fs from 'fs';
 import os from 'os';
@@ -25,8 +30,9 @@ import { closeDb } from '../db/connection.js';
 import { listCommands } from './registry.js';
 import { FORCE_LIVENESS_ENV, OfflineTransport } from './offline-transport.js';
 
-let dir: string;
+let dir: string | undefined;
 let dbPath: string;
+let priorForceLiveness: string | undefined;
 
 beforeEach(() => {
   dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ncl-offline-registry-'));
@@ -34,13 +40,21 @@ beforeEach(() => {
   // The liveness check looks for data/ncl.sock under the REPO's DATA_DIR, which
   // on a dev box may genuinely have a host running. The property under test is
   // command resolution, not the liveness gate (covered next door), so waive it.
+  // Saved and RESTORED rather than deleted: process.env is shared, and a test
+  // that clears a variable it did not set silently changes the environment for
+  // whatever runs next.
+  priorForceLiveness = process.env[FORCE_LIVENESS_ENV];
   process.env[FORCE_LIVENESS_ENV] = '1';
 });
 
 afterEach(() => {
   closeDb();
-  delete process.env[FORCE_LIVENESS_ENV];
-  fs.rmSync(dir, { recursive: true, force: true });
+  if (priorForceLiveness === undefined) delete process.env[FORCE_LIVENESS_ENV];
+  else process.env[FORCE_LIVENESS_ENV] = priorForceLiveness;
+  // Guarded: if mkdtempSync above threw, `dir` is undefined and an unguarded
+  // rmSync raises a TypeError that MASKS the real setup failure.
+  if (dir) fs.rmSync(dir, { recursive: true, force: true });
+  dir = undefined;
 });
 
 describe('offline transport populates the command registry', () => {
@@ -48,8 +62,12 @@ describe('offline transport populates the command registry', () => {
     const t = new OfflineTransport({ migrate: true, dbPath });
     try {
       const res = await t.sendFrame({ id: 'test-1', command: 'groups-list', args: {} });
-      // Assert on the CODE, not on ok: a handler that fails for some unrelated
-      // reason is a different defect and should not be reported as this one.
+      // Both assertions are wanted, and the ORDER is the point: the code check
+      // runs first so a registry regression fails with the production symptom
+      // named, rather than with a bare "expected false to be true" that says
+      // nothing about which defect just reappeared. `ok` is then asserted too —
+      // an unrelated handler failure SHOULD fail this test, it just should not
+      // be the line the reader sees first.
       if (!res.ok) expect(res.error.code, res.error.message).not.toBe('unknown-command');
       expect(res.ok).toBe(true);
     } finally {
