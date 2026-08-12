@@ -308,6 +308,13 @@
       "intent": "Proves open() closes the handle it opened when ensurePrivateDb or runMigrations throws, observed via a mocked closeDb."
     },
     {
+      "path": "src/cli/offline-registry.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Proves offline `ncl` can RESOLVE a command, using the real dispatch against a real temp DB. Separate from offline-transport.test.ts because that file mocks ./dispatch.js and therefore could not see that the command registry was empty — which is how offline mode shipped inert, returning unknown-command for every command with a green suite behind it.",
+      "guard": "npx vitest run src/cli/offline-registry.test.ts"
+    },
+    {
       "path": "src/cli/offline-transport.test.ts",
       "kind": "test",
       "status": "carried",
@@ -319,7 +326,7 @@
       "kind": "source",
       "status": "carried",
       "intent": "Offline `ncl` transport: dispatch in-process against data/v2.db so the upgrade runbook can run `ncl groups list` / `ncl tasks pause` before the host is allowed to boot. Without it the sanctioned order is unreachable — /migrate-memory needs ncl, ncl needs the host, the host needs the upgrade marker, and the marker must be stamped LAST.",
-      "guard": "npx vitest run src/cli/offline-transport.test.ts"
+      "guard": "npx vitest run src/cli/offline-transport.test.ts src/cli/offline-registry.test.ts"
     },
     {
       "path": "src/cli/resources/groups-config.test.ts",
