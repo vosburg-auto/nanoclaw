@@ -188,6 +188,31 @@ export function assertPrivateDb(dbPath: string): void {
 }
 
 /**
+ * Populate the command registry before dispatching.
+ *
+ * `dispatch()` resolves commands out of the module-level registry in
+ * `registry.ts`, which is populated by the SIDE EFFECT of importing
+ * `commands/index.js`. The host does that once in `src/index.ts`, so the socket
+ * path has always had a full registry by the time a frame arrives — the socket
+ * client itself never needs one, because the lookup happens in the host process.
+ *
+ * Offline mode dispatches in the CLIENT process, where nothing had ever imported
+ * that barrel. So the registry was empty (0 commands, vs 71 after the import) and
+ * EVERY offline command returned `unknown-command` — the feature was inert in
+ * production while its whole test file passed, because that file mocks
+ * `./dispatch.js` and therefore never touches the registry at all.
+ *
+ * Imported lazily rather than at module top level: `client.ts` loads this module
+ * on every `ncl` invocation to decide the transport, and the socket path has no
+ * use for the resource tree. Cached, so repeated frames pay for it once.
+ */
+let commandsLoaded: Promise<unknown> | null = null;
+export function loadCommands(): Promise<unknown> {
+  commandsLoaded ??= import('./commands/index.js');
+  return commandsLoaded;
+}
+
+/**
  * Dispatches in-process against `data/v2.db`.
  *
  * `migrate` is opt-in and defaults to FALSE. That default is load-bearing: the
@@ -223,6 +248,7 @@ export class OfflineTransport implements Transport {
   }
 
   async sendFrame(req: RequestFrame): Promise<ResponseFrame> {
+    await loadCommands();
     this.open();
     return dispatch(req, { caller: 'host' });
   }
