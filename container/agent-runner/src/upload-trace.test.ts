@@ -48,8 +48,13 @@ describe('poll loop — /upload-trace command', () => {
     const controller = new AbortController();
     const loopPromise = runPollLoopWithTimeout(provider, controller.signal, 5000);
 
-    await waitFor(() => getUndeliveredMessages().length > 0, 5000);
-    controller.abort();
+    try {
+      await waitFor(() => getUndeliveredMessages().length > 0, 5000);
+    } finally {
+      // Stops the real loop, not just the race: without the signal the loop
+      // keeps polling the shared DB singleton and steals the next test's rows.
+      controller.abort();
+    }
 
     const out = getUndeliveredMessages();
     expect(out).toHaveLength(1);
