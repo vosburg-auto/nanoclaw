@@ -27,6 +27,8 @@ permissions:
 
 jobs:
   open-bump-pr:
+    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
+    if: github.repository == 'nanocoai/nanoclaw'
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the bump branch

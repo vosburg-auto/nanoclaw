@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     # Off unless deliberately enabled. Without this it reports what it would
     # have done and stops, so the whole path can be watched before it is armed.
-    if: github.event.workflow_run.conclusion == 'success'
+    if: github.repository == 'nanocoai/nanoclaw' && (github.event.workflow_run.conclusion == 'success')
     permissions:
       contents: read
       id-token: write # OIDC for the read-only ECR role
