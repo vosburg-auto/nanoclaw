@@ -463,6 +463,41 @@ describe('error result with no <message> envelope', () => {
     expect(pushes).toHaveLength(0);
   });
 
+  it('does not echo an error back to a self-addressed (on_wake) batch — no a2a self-send loop', async () => {
+    const { query, pushes } = makeResultQuery({
+      type: 'result',
+      text: 'API Error: 400 Claude Code does not support this model',
+      isError: true,
+    });
+    const selfRouting = {
+      platformId: 'ag-self',
+      channelType: 'agent',
+      threadId: null,
+      inReplyTo: 'restart-1',
+      selfAgentGroupId: 'ag-self',
+    };
+
+    await processQuery(query, selfRouting, ['restart-1'], 'claude', undefined, 'prompt', undefined);
+
+    expect(getUndeliveredMessages()).toHaveLength(0);
+    expect(pushes).toHaveLength(0);
+  });
+
+  it('still delivers an error to a peer agent origin', async () => {
+    const { query } = makeResultQuery({ type: 'result', text: 'boom', isError: true });
+    const peerRouting = {
+      platformId: 'ag-peer',
+      channelType: 'agent',
+      threadId: null,
+      inReplyTo: 'a2a-1',
+      selfAgentGroupId: 'ag-self',
+    };
+
+    await processQuery(query, peerRouting, ['a2a-1'], 'claude', undefined, 'prompt', undefined);
+
+    expect(getUndeliveredMessages()).toHaveLength(1);
+  });
+
   it.each([
     '<internal>PRIVATE THOUGHTS</internal>\n\nOpenCode prompt failed: {"responseHeaders":{"authorization":"fixture-secret"}}',
     'Unwrapped private reasoning\n\n{"responseBody":"fixture-secret"}',

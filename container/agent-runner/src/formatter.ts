@@ -151,6 +151,12 @@ export interface RoutingContext {
   channelType: string | null;
   threadId: string | null;
   inReplyTo: string | null;
+  /** This container's own agent group id (fork). Lets error paths recognise a
+   *  batch whose origin is the agent itself — an on_wake/system row the host
+   *  writes as channel_type='agent', platform_id=<own group> — and not echo an
+   *  error back to it, which the host routes as a self-send and re-wakes the
+   *  same failing session (the 2026-09-23 self-send loop). */
+  selfAgentGroupId?: string;
   /** Batch is a task run. One-door delivery: only an explicitly addressed tool
    *  delivers from a task session; final-text `<message to>` blocks are inert
    *  and the final text auto-appends to the series run log. */

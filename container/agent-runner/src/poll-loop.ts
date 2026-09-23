@@ -67,6 +67,22 @@ export interface PollLoopConfig {
    * polling forever and stealing messages from the next test's DB.
    */
   signal?: AbortSignal;
+  /** Own agent group id (fork) — see RoutingContext.selfAgentGroupId. */
+  agentGroupId?: string;
+}
+
+/**
+ * True when the batch's reply target is this agent itself (channel 'agent',
+ * platform_id = own group): restart/self-mod on_wake rows are addressed this
+ * way. An error notice written there is routed by the host as an a2a
+ * self-send, lands in this same session, fails the same way, and loops once
+ * per poll. There is no human on that route, so error notices are dropped
+ * (logged) instead.
+ */
+export function isSelfAddressed(routing: RoutingContext): boolean {
+  return (
+    routing.channelType === 'agent' && !!routing.selfAgentGroupId && routing.platformId === routing.selfAgentGroupId
+  );
 }
 
 /**
@@ -155,7 +171,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     const ids = messages.map((m) => m.id);
     markProcessing(ids);
 
-    const routing = extractRouting(messages);
+    const routing: RoutingContext = { ...extractRouting(messages), selfAgentGroupId: config.agentGroupId };
 
     // Command handling: the host router gates filtered and unauthorized
     // admin commands before they reach the container. The only command
@@ -531,7 +547,7 @@ export async function processQuery(
         query.push(prompt);
         archivePrompts.push(prompt);
         const next: QueuedTurn = {
-          routing: extractRouting(keep),
+          routing: { ...extractRouting(keep), selfAgentGroupId: routing.selfAgentGroupId },
           unwrappedNudged: false,
           taskBlockNudged: false,
         };
@@ -773,6 +789,10 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
 
 /** Send the dedicated provider error or a generic failure notice. */
 async function deliverErrorResult(routing: RoutingContext, text: string): Promise<void> {
+  if (isSelfAddressed(routing)) {
+    log('Error result on a self-addressed batch — not echoing back to self (would loop)');
+    return;
+  }
   log('Error result notice — delivering to channel');
   await writeMessageOut({
     id: generateId(),

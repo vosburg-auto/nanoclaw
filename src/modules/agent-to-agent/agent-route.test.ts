@@ -3,7 +3,13 @@ import fs from 'fs';
 import path from 'path';
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
 
-import { forwardAttachedFiles, isSafeAttachmentName, routeAgentMessage } from './agent-route.js';
+import {
+  SELF_SEND_MAX_PER_WINDOW,
+  forwardAttachedFiles,
+  isSafeAttachmentName,
+  resetSelfSendLimiter,
+  routeAgentMessage,
+} from './agent-route.js';
 import { log } from '../../log.js';
 import { createDestination } from './db/agent-destinations.js';
 import { initTestDb, closeDb, runMigrations, createAgentGroup } from '../../db/index.js';
@@ -96,6 +102,7 @@ describe('routeAgentMessage return-path', () => {
   let SB: Session;
 
   beforeEach(async () => {
+    resetSelfSendLimiter();
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
     fs.mkdirSync(TEST_DIR, { recursive: true });
 
@@ -392,6 +399,32 @@ describe('routeAgentMessage return-path', () => {
     const s2Rows = readInbound(A, S2.id);
     expect(s2Rows).toHaveLength(1);
     expect(JSON.parse(s2Rows[0].content).text).toBe('self-note');
+  });
+
+  it('self-send loop is bounded per session (fork: 2026-09-23 self-send loop)', async () => {
+    let delivered = 0;
+    let denied = 0;
+    for (let i = 0; i < SELF_SEND_MAX_PER_WINDOW + 5; i++) {
+      try {
+        await routeAgentMessage(
+          { id: `self-${i}`, platform_id: A, content: JSON.stringify({ text: `err ${i}` }), in_reply_to: null },
+          S1,
+        );
+        delivered++;
+      } catch (e) {
+        expect((e as Error).message).toContain('self-send rate limit');
+        denied++;
+      }
+    }
+    expect(delivered).toBe(SELF_SEND_MAX_PER_WINDOW);
+    expect(denied).toBe(5);
+    expect(readInbound(A, S2.id)).toHaveLength(SELF_SEND_MAX_PER_WINDOW);
+    // Peer sends are not counted against the self-send bound.
+    await routeAgentMessage(
+      { id: 'peer', platform_id: B, content: JSON.stringify({ text: 'hi' }), in_reply_to: null },
+      S1,
+    );
+    expect(readInbound(B, SB.id)).toHaveLength(1);
   });
 
   it('BUG: no volume cap on a2a routing — unbounded ping-pong is allowed (#2063)', async () => {
