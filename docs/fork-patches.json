@@ -476,6 +476,19 @@
       "intent": "Guards that the upgrade tripwire precedes the restart-backoff counter."
     },
     {
+      "path": "src/test/tmp-hygiene.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the per-file private TMPDIR root: os.tmpdir() and spawned mktemp land inside it, and vitest.config.ts registers the setup file."
+    },
+    {
+      "path": "src/test/tmp-root.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "vitest setupFiles module: per-file private nc-test-* TMPDIR root removed in afterAll, plus a 6h age-gated sweep, so the suite leaks nothing into the tmpdir.",
+      "guard": "pnpm exec vitest run src/test/tmp-hygiene.test.ts"
+    },
+    {
       "path": "src/types.ts",
       "kind": "source",
       "status": "carried",
@@ -514,6 +527,13 @@
       "status": "carried",
       "intent": "Loopback bind by default with WEBHOOK_BIND as the opt-in.",
       "guard": "pnpm exec vitest run src/webhook-server.bind.test.ts"
+    },
+    {
+      "path": "vitest.config.ts",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Registers src/test/tmp-root.ts in setupFiles so every test file runs under a private TMPDIR root.",
+      "guard": "pnpm exec vitest run src/test/tmp-hygiene.test.ts"
     }
   ]
 }
