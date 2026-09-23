@@ -35,12 +35,13 @@ vi.mock('../src/cli/offline-transport.js', () => ({
 }));
 
 const throwing = (msg: string) => ({
-  prepare: () => {
+  all: async () => {
     throw new Error(msg);
   },
 });
+const rows = (names: string[]) => ({ all: async () => names.map((name) => ({ name })) });
 
-let appliedNames: () => Set<string>;
+let appliedNames: () => Promise<Set<string>>;
 
 beforeEach(async () => {
   vi.resetModules();
@@ -52,41 +53,41 @@ beforeEach(async () => {
 afterEach(() => vi.resetAllMocks());
 
 describe('appliedNames', () => {
-  it('returns the applied migration names', () => {
-    getDb.mockReturnValue({ prepare: () => ({ all: () => [{ name: 'a' }, { name: 'b' }] }) });
-    expect([...appliedNames()]).toEqual(['a', 'b']);
+  it('returns the applied migration names', async () => {
+    getDb.mockReturnValue(rows(['a', 'b']));
+    expect([...(await appliedNames())]).toEqual(['a', 'b']);
   });
 
-  it('treats a missing schema_version table as a fresh database', () => {
+  it('treats a missing schema_version table as a fresh database', async () => {
     getDb.mockReturnValue(throwing('no such table: schema_version'));
-    expect(appliedNames().size).toBe(0);
+    expect((await appliedNames()).size).toBe(0);
   });
 
-  it('THROWS on SQLITE_BUSY instead of reporting zero applied', () => {
+  it('THROWS on SQLITE_BUSY instead of reporting zero applied', async () => {
     // The defect: a locked database reported "0 migrations applied", which reads
     // as "fresh install, safe to migrate" during exactly the recovery where the
     // lock means another process holds it.
     getDb.mockReturnValue(throwing('SQLITE_BUSY: database is locked'));
-    expect(() => appliedNames()).toThrow(/could not read schema_version/);
-    expect(() => appliedNames()).toThrow(/SQLITE_BUSY/);
+    await expect(appliedNames()).rejects.toThrow(/could not read schema_version/);
+    await expect(appliedNames()).rejects.toThrow(/SQLITE_BUSY/);
   });
 
-  it('THROWS on a permission error instead of reporting zero applied', () => {
+  it('THROWS on a permission error instead of reporting zero applied', async () => {
     getDb.mockReturnValue(throwing('SQLITE_CANTOPEN: unable to open database file'));
-    expect(() => appliedNames()).toThrow(/could not read schema_version/);
+    await expect(appliedNames()).rejects.toThrow(/could not read schema_version/);
   });
 
-  it('names the database it could not read, so the operator knows which one', () => {
+  it('names the database it could not read, so the operator knows which one', async () => {
     getDb.mockReturnValue(throwing('SQLITE_BUSY: database is locked'));
-    expect(() => appliedNames()).toThrow(/v2\.db/);
+    await expect(appliedNames()).rejects.toThrow(/v2\.db/);
   });
 
-  it('does not mistake a table name containing "no such table" prose for the fresh case', () => {
+  it('does not mistake a table name containing "no such table" prose for the fresh case', async () => {
     // Guards the discrimination itself: the check is a regex over the message, so
     // a message that merely MENTIONS the phrase must still be treated as unknown
     // only when it genuinely is the missing-table error.
     getDb.mockReturnValue(throwing('disk I/O error'));
-    expect(() => appliedNames()).toThrow(/could not read schema_version/);
+    await expect(appliedNames()).rejects.toThrow(/could not read schema_version/);
   });
 });
 
@@ -101,7 +102,7 @@ describe('main() preconditions', () => {
       throw new Error('host appears to be running');
     });
     const { main } = await import('./offline-migrate.js');
-    expect(() => main()).toThrow(/host appears to be running/);
+    await expect(main()).rejects.toThrow(/host appears to be running/);
     expect(conn.initDb, 'must refuse BEFORE opening the database').not.toHaveBeenCalled();
   });
 
@@ -112,15 +113,15 @@ describe('main() preconditions', () => {
       throw new Error('readable by group/other');
     });
     const { main } = await import('./offline-migrate.js');
-    expect(() => main()).toThrow(/readable by group\/other/);
+    await expect(main()).rejects.toThrow(/readable by group\/other/);
     expect(conn.initDb).not.toHaveBeenCalled();
   });
 
   it('runs both guards on the happy path', async () => {
     const t = await import('../src/cli/offline-transport.js');
-    getDb.mockReturnValue({ prepare: () => ({ all: () => [] }) });
+    getDb.mockReturnValue(rows([]));
     const { main } = await import('./offline-migrate.js');
-    main();
+    await main();
     expect(t.assertHostNotRunning).toHaveBeenCalled();
     expect(t.assertPrivateDb).toHaveBeenCalled();
   });
@@ -151,7 +152,7 @@ describe('force-flag handling on the migration entry point', () => {
     process.env.NANOCLAW_OFFLINE_FORCE_PERMS = 'false';
     try {
       const { main } = await import('./offline-migrate.js');
-      expect(() => main()).toThrow(/readable by group\/other/);
+      await expect(main()).rejects.toThrow(/readable by group\/other/);
     } finally {
       delete process.env.NANOCLAW_OFFLINE_FORCE_PERMS;
     }
@@ -173,12 +174,12 @@ describe('--check (report-only) mode', () => {
   };
 
   it('applies nothing and says so', async () => {
-    getDb.mockReturnValue({ prepare: () => ({ all: () => [{ name: 'a' }, { name: 'b' }] }) });
+    getDb.mockReturnValue(rows(['a', 'b']));
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
       const mod = await withArgv(['--check']);
       const mig = await import('../src/db/migrations/index.js');
-      mod.main();
+      await mod.main();
       expect(mig.runMigrations, '--check must not apply migrations').not.toHaveBeenCalled();
       const printed = out.mock.calls.map((c) => String(c[0])).join('');
       expect(printed).toMatch(/2 migration\(s\) already applied/);
@@ -194,16 +195,16 @@ describe('--check (report-only) mode', () => {
       throw new Error('host appears to be running');
     });
     const mod = await withArgv(['--check']);
-    expect(() => mod.main()).toThrow(/host appears to be running/);
+    await expect(mod.main()).rejects.toThrow(/host appears to be running/);
   });
 
   it('without --check it does apply', async () => {
-    getDb.mockReturnValue({ prepare: () => ({ all: () => [] }) });
+    getDb.mockReturnValue(rows([]));
     const out = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     try {
       const mod = await withArgv([]);
       const mig = await import('../src/db/migrations/index.js');
-      mod.main();
+      await mod.main();
       expect(mig.runMigrations).toHaveBeenCalled();
     } finally {
       out.mockRestore();
@@ -221,7 +222,7 @@ describe('handle lifetime', () => {
       throw new Error('could not make it private');
     });
     const { main } = await import('./offline-migrate.js');
-    expect(() => main()).toThrow(/could not make it private/);
+    await expect(main()).rejects.toThrow(/could not make it private/);
     expect(conn.closeDb, 'the handle initDb opened must still be closed').toHaveBeenCalled();
   });
 });
