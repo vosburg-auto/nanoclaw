@@ -80,6 +80,22 @@ export interface PollLoopConfig {
    * polling forever and stealing messages from the next test's DB.
    */
   signal?: AbortSignal;
+  /** Own agent group id (fork) — see RoutingContext.selfAgentGroupId. */
+  agentGroupId?: string;
+}
+
+/**
+ * True when the batch's reply target is this agent itself (channel 'agent',
+ * platform_id = own group): restart/self-mod on_wake rows are addressed this
+ * way. An error notice written there is routed by the host as an a2a
+ * self-send, lands in this same session, fails the same way, and loops once
+ * per poll. There is no human on that route, so error notices are dropped
+ * (logged) instead.
+ */
+export function isSelfAddressed(routing: RoutingContext): boolean {
+  return (
+    routing.channelType === 'agent' && !!routing.selfAgentGroupId && routing.platformId === routing.selfAgentGroupId
+  );
 }
 
 /**
@@ -156,7 +172,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     const ids = messages.map((m) => m.id);
     markProcessing(ids);
 
-    const routing = extractRouting(messages);
+    const routing: RoutingContext = { ...extractRouting(messages), selfAgentGroupId: config.agentGroupId };
 
     // Command handling: the host router gates filtered and unauthorized
     // admin commands before they reach the container. The only command
@@ -276,15 +292,20 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         clearContinuation(config.providerName);
       }
 
-      // Write error response so the user knows something went wrong
-      writeMessageOut({
-        id: generateId(),
-        kind: 'chat',
-        platform_id: routing.platformId,
-        channel_type: routing.channelType,
-        thread_id: routing.threadId,
-        content: JSON.stringify({ text: `Error: ${errMsg}` }),
-      });
+      // Write error response so the user knows something went wrong — unless
+      // the batch came from this agent itself (would loop as a self-send).
+      if (isSelfAddressed(routing)) {
+        log('Self-addressed batch errored — not echoing the error back to self');
+      } else {
+        writeMessageOut({
+          id: generateId(),
+          kind: 'chat',
+          platform_id: routing.platformId,
+          channel_type: routing.channelType,
+          thread_id: routing.threadId,
+          content: JSON.stringify({ text: `Error: ${errMsg}` }),
+        });
+      }
 
       // The batch is still acked completed below (no redelivery). Without
       // this line the only log trace of the errored turn is "Query error"
@@ -616,6 +637,10 @@ function handleEvent(event: ProviderEvent, _routing: RoutingContext): void {
  * `Error:` prefix — the provider's text is already a user-facing message.
  */
 function deliverErrorResult(text: string, routing: RoutingContext): void {
+  if (isSelfAddressed(routing)) {
+    log('Error result on a self-addressed batch — not echoing back to self (would loop)');
+    return;
+  }
   log('Error result with no <message> envelope — delivering to channel');
   writeMessageOut({
     id: generateId(),

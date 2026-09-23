@@ -231,6 +231,34 @@ function resolveTargetSession(msg: RoutableAgentMessage, sourceSession: Session,
   return resolveSession(targetAgentGroupId, null, null, 'agent-shared').session;
 }
 
+/**
+ * Fork: self-send bound. The a2a.send guard allows self-sends unconditionally
+ * (no destination row, no policy), so a container that keeps writing to its
+ * own agent group re-wakes itself with no hop limit. On 2026-09-23 a failing
+ * model turned every restart on_wake into an error echo routed back to self,
+ * ~1/s for minutes. Cap self-sends per source session in a sliding window;
+ * over the cap the message is denied (consumed, not delivered, not retried).
+ */
+export const SELF_SEND_MAX_PER_WINDOW = 10;
+export const SELF_SEND_WINDOW_MS = 60_000;
+const selfSendLog = new Map<string, number[]>();
+
+function selfSendOverLimit(sessionId: string, nowMs: number): boolean {
+  const recent = (selfSendLog.get(sessionId) ?? []).filter((t) => nowMs - t < SELF_SEND_WINDOW_MS);
+  if (recent.length >= SELF_SEND_MAX_PER_WINDOW) {
+    selfSendLog.set(sessionId, recent);
+    return true;
+  }
+  recent.push(nowMs);
+  selfSendLog.set(sessionId, recent);
+  return false;
+}
+
+/** Test seam: forget recorded self-sends. */
+export function resetSelfSendLimiter(): void {
+  selfSendLog.clear();
+}
+
 export async function routeAgentMessage(
   msg: RoutableAgentMessage,
   session: Session,
@@ -284,6 +312,18 @@ export async function routeAgentMessage(
       msgId: msg.id,
     });
     return;
+  }
+
+  if (targetAgentGroupId === sourceAgentGroupId && selfSendOverLimit(session.id, Date.now())) {
+    log.warn('Agent self-send rate limit hit — dropping', {
+      agentGroupId: sourceAgentGroupId,
+      sessionId: session.id,
+      msgId: msg.id,
+      limit: `${SELF_SEND_MAX_PER_WINDOW}/${SELF_SEND_WINDOW_MS}ms`,
+    });
+    throw new GuardDenyError(
+      `self-send rate limit: more than ${SELF_SEND_MAX_PER_WINDOW} self-addressed messages in ${SELF_SEND_WINDOW_MS / 1000}s from session ${session.id}`,
+    );
   }
 
   await performAgentRoute(msg, session, targetAgentGroupId);
