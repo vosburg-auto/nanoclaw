@@ -591,13 +591,6 @@
       "guard": "node scripts/check-upstream-workflow-gates.mjs"
     },
     {
-      "path": ".github/workflows/release.yml",
-      "kind": "config",
-      "status": "carried",
-      "intent": "Every job gated on github.repository == 'nanocoai/nanoclaw': it needs upstream-only infrastructure (AWS roles/ECR, the channels/providers registry branches) and otherwise fails on every fork PR.",
-      "guard": "node scripts/check-upstream-workflow-gates.mjs"
-    },
-    {
       "path": "scripts/check-upstream-workflow-gates.mjs",
       "kind": "test",
       "status": "carried",

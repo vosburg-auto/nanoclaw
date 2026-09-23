@@ -28,8 +28,6 @@ concurrency:
 
 jobs:
   dispatch:
-    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
-    if: github.repository == 'nanocoai/nanoclaw'
     runs-on: ubuntu-latest
     permissions: {}
     steps:
@@ -49,8 +47,6 @@ jobs:
           fi
 
   verify:
-    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
-    if: github.repository == 'nanocoai/nanoclaw'
     needs: dispatch
     runs-on: ubuntu-latest
     permissions:
@@ -176,7 +172,7 @@ jobs:
         run: bun run test
 
   publish:
-    if: github.repository == 'nanocoai/nanoclaw' && (inputs.mode == 'publish')
+    if: inputs.mode == 'publish'
     needs: verify
     runs-on: ubuntu-latest
     # This environment must be created and protected before the workflow lands.

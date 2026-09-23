@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 
 const GATE = "github.repository == 'nanocoai/nanoclaw'";
-const FILES = ['registry-skills', 'verify-agent-image', 'approve-agent-image', 'refresh-agent-image', 'release'].map(
+const FILES = ['registry-skills', 'verify-agent-image', 'approve-agent-image', 'refresh-agent-image'].map(
   (f) => `.github/workflows/${f}.yml`,
 );
 
