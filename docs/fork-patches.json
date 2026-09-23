@@ -534,6 +534,12 @@
       "status": "carried",
       "intent": "Registers src/test/tmp-root.ts in setupFiles so every test file runs under a private TMPDIR root.",
       "guard": "pnpm exec vitest run src/test/tmp-hygiene.test.ts"
+    },
+    {
+      "path": "container/agent-runner/src/upload-trace.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Passes the stop signal to the real runPollLoop and aborts in a finally, so the loop cannot outlive the test and steal later files' messages_in rows (the poll-loop.test.ts 'nudges a second task run' timeout under a full bun test run)."
     }
   ]
 }
