@@ -23,7 +23,7 @@ vi.mock('../../config.js', async () => {
 
 const TEST_DIR = '/tmp/nanoclaw-test-cli-groups-config';
 
-import { initTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
+import { initSqliteTestDb, closeDb, runMigrations, createAgentGroup, getDb } from '../../db/index.js';
 import { createContainerConfig, ensureContainerConfig, getContainerConfig } from '../../db/container-configs.js';
 import { configFromDb } from '../../container-config.js';
 import type { AgentGroup } from '../../types.js';
@@ -46,18 +46,18 @@ async function configUpdate(args: Record<string, unknown>) {
 }
 
 describe('groups config update --auto-compact-window', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
     fs.mkdirSync(TEST_DIR, { recursive: true });
 
-    const db = initTestDb();
-    runMigrations(db);
-    createAgentGroup(group());
-    ensureContainerConfig(GID);
+    const db = await initSqliteTestDb();
+    await runMigrations(db);
+    await createAgentGroup(group());
+    await ensureContainerConfig(GID);
   });
 
-  afterEach(() => {
-    closeDb();
+  afterEach(async () => {
+    await closeDb();
     if (fs.existsSync(TEST_DIR)) fs.rmSync(TEST_DIR, { recursive: true });
   });
 
@@ -65,7 +65,7 @@ describe('groups config update --auto-compact-window', () => {
     const resp = await configUpdate({ 'auto-compact-window': '450000' });
     expect(resp.ok).toBe(true);
 
-    const row = getContainerConfig(GID)!;
+    const row = (await getContainerConfig(GID))!;
     expect(row.auto_compact_window).toBe(450000);
     // Materialized container.json carries the camelCase field.
     expect(configFromDb(row, group()).autoCompactWindow).toBe(450000);
@@ -76,7 +76,7 @@ describe('groups config update --auto-compact-window', () => {
     const resp = await configUpdate({ 'auto-compact-window': 'default' });
     expect(resp.ok).toBe(true);
 
-    const row = getContainerConfig(GID)!;
+    const row = (await getContainerConfig(GID))!;
     expect(row.auto_compact_window).toBeNull();
     // Unset in the materialized shape — the container falls back to its default.
     expect(configFromDb(row, group()).autoCompactWindow).toBeUndefined();
@@ -96,20 +96,20 @@ describe('groups config update --auto-compact-window', () => {
       expect(resp.ok, String(bad)).toBe(false);
     }
     // Row untouched throughout.
-    expect(getContainerConfig(GID)!.auto_compact_window).toBeNull();
+    expect((await getContainerConfig(GID))!.auto_compact_window).toBeNull();
     // Sanity: the DB default is genuinely NULL, so a fresh group inherits the
     // provider default rather than a schema-level constant.
-    const raw = getDb().prepare('SELECT auto_compact_window FROM container_configs WHERE agent_group_id = ?').get(GID);
+    const raw = await getDb().get('SELECT auto_compact_window FROM container_configs WHERE agent_group_id = ?', GID);
     expect(raw).toEqual({ auto_compact_window: null });
   });
 
-  it('createContainerConfig persists every typed field, including cli_scope and auto_compact_window', () => {
+  it('createContainerConfig persists every typed field, including cli_scope, speed and auto_compact_window', async () => {
     // Regression for the silent-drop hazard: better-sqlite3 ignores bound
     // properties the INSERT doesn't reference, so a column missing from the
     // statement silently gets its SQL default instead of the caller's value.
     const GID2 = 'ag-acw-insert';
-    createAgentGroup({ id: GID2, name: 'acw2', folder: 'acw2', agent_provider: null, created_at: now() });
-    createContainerConfig({
+    await createAgentGroup({ id: GID2, name: 'acw2', folder: 'acw2', agent_provider: null, created_at: now() });
+    await createContainerConfig({
       agent_group_id: GID2,
       provider: 'claude',
       model: null,
@@ -124,10 +124,11 @@ describe('groups config update --auto-compact-window', () => {
       additional_mounts: '[]',
       cli_scope: 'global',
       timezone: 'Asia/Tokyo',
+      speed: 'fast',
       auto_compact_window: 450000,
       updated_at: now(),
     });
-    const row = getContainerConfig(GID2)!;
+    const row = (await getContainerConfig(GID2))!;
     expect(row.cli_scope).toBe('global');
     expect(row.auto_compact_window).toBe(450000);
     // `timezone` must be bound NON-null and asserted: with `timezone: null` and
@@ -136,5 +137,7 @@ describe('groups config update --auto-compact-window', () => {
     // comment above describes. createContainerConfig runs at host startup via
     // src/backfill-container-configs.ts.
     expect(row.timezone).toBe('Asia/Tokyo');
+    // Same hazard for upstream's `speed`, which landed on the same INSERT lines.
+    expect(row.speed).toBe('fast');
   });
 });
