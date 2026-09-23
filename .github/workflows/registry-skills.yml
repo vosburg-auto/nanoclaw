@@ -21,6 +21,8 @@ permissions:
 
 jobs:
   discover:
+    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
+    if: github.repository == 'nanocoai/nanoclaw'
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.skills.outputs.matrix }}
@@ -72,6 +74,8 @@ jobs:
           echo "providers=$providers" >> "$GITHUB_OUTPUT"
 
   test:
+    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
+    if: github.repository == 'nanocoai/nanoclaw'
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -101,6 +105,8 @@ jobs:
         run: pnpm exec tsx scripts/test-registry-skills.ts "${{ matrix.skill }}"
 
   combined-providers:
+    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
+    if: github.repository == 'nanocoai/nanoclaw'
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -124,6 +130,8 @@ jobs:
         run: pnpm exec tsx scripts/test-registry-skills.ts --combined-providers
 
   pre-contract-providers:
+    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
+    if: github.repository == 'nanocoai/nanoclaw'
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -144,6 +152,8 @@ jobs:
         run: pnpm exec tsx scripts/test-registry-skills.ts --pre-contract-providers
 
   old-provider-refresh:
+    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
+    if: github.repository == 'nanocoai/nanoclaw'
     needs: discover
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -167,7 +177,7 @@ jobs:
         run: pnpm exec tsx scripts/test-registry-skills.ts --old-provider-refresh 99283f3e274b2b1dae47b141ac4f11f56ad8eb2d
 
   provider-promotion:
-    if: always()
+    if: always() && github.repository == 'nanocoai/nanoclaw'
     needs: [test, combined-providers, pre-contract-providers, old-provider-refresh]
     runs-on: ubuntu-latest
     steps:
@@ -186,7 +196,7 @@ jobs:
   # and workflow_dispatch alike, so only `success` passes and a skip fails.
   registry-gate:
     name: registry gate
-    if: always()
+    if: always() && github.repository == 'nanocoai/nanoclaw'
     needs: [discover, test, combined-providers, pre-contract-providers, old-provider-refresh, provider-promotion]
     permissions: {}
     runs-on: ubuntu-latest

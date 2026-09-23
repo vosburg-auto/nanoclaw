@@ -35,6 +35,8 @@ permissions:
 
 jobs:
   verify:
+    # Fork: needs upstream-only infrastructure (AWS roles, registry branches).
+    if: github.repository == 'nanocoai/nanoclaw'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -600,6 +600,41 @@
       "kind": "test",
       "status": "carried",
       "intent": "Passes the stop signal to the real runPollLoop and aborts in a finally, so the loop cannot outlive the test and steal later files' messages_in rows (the poll-loop.test.ts 'nudges a second task run' timeout under a full bun test run)."
+    },
+    {
+      "path": ".github/workflows/registry-skills.yml",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Every job gated on github.repository == 'nanocoai/nanoclaw': it needs upstream-only infrastructure (AWS roles/ECR, the channels/providers registry branches) and otherwise fails on every fork PR.",
+      "guard": "node scripts/check-upstream-workflow-gates.mjs"
+    },
+    {
+      "path": ".github/workflows/verify-agent-image.yml",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Every job gated on github.repository == 'nanocoai/nanoclaw': it needs upstream-only infrastructure (AWS roles/ECR, the channels/providers registry branches) and otherwise fails on every fork PR.",
+      "guard": "node scripts/check-upstream-workflow-gates.mjs"
+    },
+    {
+      "path": ".github/workflows/approve-agent-image.yml",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Every job gated on github.repository == 'nanocoai/nanoclaw': it needs upstream-only infrastructure (AWS roles/ECR, the channels/providers registry branches) and otherwise fails on every fork PR.",
+      "guard": "node scripts/check-upstream-workflow-gates.mjs"
+    },
+    {
+      "path": ".github/workflows/refresh-agent-image.yml",
+      "kind": "config",
+      "status": "carried",
+      "intent": "Every job gated on github.repository == 'nanocoai/nanoclaw': it needs upstream-only infrastructure (AWS roles/ECR, the channels/providers registry branches) and otherwise fails on every fork PR.",
+      "guard": "node scripts/check-upstream-workflow-gates.mjs"
+    },
+    {
+      "path": "scripts/check-upstream-workflow-gates.mjs",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Fork guard asserting every job in the upstream-infrastructure workflows carries the upstream-repo gate.",
+      "guard": "node scripts/check-upstream-workflow-gates.mjs"
     }
   ]
 }
