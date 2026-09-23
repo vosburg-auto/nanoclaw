@@ -46,3 +46,17 @@ describe('hostGatewayArgs', () => {
     }
   });
 });
+
+describe('Docker driver call site', () => {
+  // Upstream v2.3.0 moved the --add-host arg into src/drivers/index.ts
+  // (dockerNetworkArgs, module-private). hostGatewayArgs() above is only
+  // useful if the driver actually calls it — a sync that takes upstream's
+  // copy of drivers/index.ts reverts to a hardcoded host-gateway and this
+  // helper goes dead with every case above still green.
+  it('dockerNetworkArgs routes through hostGatewayArgs()', async () => {
+    const fs = await import('fs');
+    const src = fs.readFileSync(new URL('./drivers/index.ts', import.meta.url), 'utf8');
+    expect(src).toContain('return hostGatewayArgs();');
+    expect(src).not.toContain("'--add-host=host.docker.internal:host-gateway'");
+  });
+});

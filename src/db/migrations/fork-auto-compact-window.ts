@@ -13,27 +13,28 @@
  * `version` is only an ordering hint and is re-assigned at insert time). It MUST
  * stay 'auto-compact-window' — the deployed install has already applied it under
  * that key, and a drifted name re-runs `up()` on a table that already has the
- * column. The `table_info` guard below makes that survivable rather than fatal:
+ * column. The column-existence guard below makes that survivable rather than fatal:
  * without it the bare ALTER throws `duplicate column name`, `runMigrations`
  * throws out of `main()` at boot, and the host crash-loops.
  *
  * See docs/BRANCH-FORK-MAINTENANCE.md.
  */
-import type Database from 'better-sqlite3';
-
 import type { Migration } from './index.js';
 
 export const forkAutoCompactWindow: Migration = {
   version: 900,
   name: 'auto-compact-window',
-  up(db: Database.Database) {
-    // Idempotency guard, same shape as 012/016 — see header for why this is
-    // load-bearing rather than defensive decoration.
-    const cols = db.prepare("PRAGMA table_info('container_configs')").all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === 'auto_compact_window')) return;
+  // Portable (no sqliteOnly): upstream froze the SQLite-only set at v2.3.0
+  // (portability.test.ts), so the guard uses the driver's columnOwners()
+  // instead of PRAGMA table_info.
+  async up(db) {
+    // Idempotency guard — see header for why this is load-bearing rather than
+    // defensive decoration.
+    const owners = (await db.columnOwners?.('auto_compact_window')) ?? [];
+    if (owners.includes('container_configs')) return;
 
     // Per-group Claude Code auto-compact threshold (tokens). NULL = provider
     // default (the agent-runner's built-in 165000 or its env override).
-    db.prepare('ALTER TABLE container_configs ADD COLUMN auto_compact_window INTEGER').run();
+    await db.exec('ALTER TABLE container_configs ADD COLUMN auto_compact_window INTEGER;');
   },
 };

@@ -248,6 +248,12 @@
       "guard": "shellcheck -S error setup/lib/install-slug.sh"
     },
     {
+      "path": "setup/set-env.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Upstream's atomic-write test asserted the old .env mode (0640) is preserved; the fork forces 0600 (setup/env-utils.ts intent), so the assertion is flipped. A wholesale take of upstream's copy fails loudly rather than silently."
+    },
+    {
       "path": "setup/set-env.ts",
       "kind": "source",
       "status": "carried",
@@ -302,17 +308,17 @@
       "intent": "Pins bin/ncl's runner resolution order."
     },
     {
-      "path": "src/cli/offline-transport-unwind.test.ts",
-      "kind": "test",
-      "status": "carried",
-      "intent": "Proves open() closes the handle it opened when ensurePrivateDb or runMigrations throws, observed via a mocked closeDb."
-    },
-    {
       "path": "src/cli/offline-registry.test.ts",
       "kind": "test",
       "status": "carried",
       "intent": "Proves offline `ncl` can RESOLVE a command, using the real dispatch against a real temp DB. Separate from offline-transport.test.ts because that file mocks ./dispatch.js and therefore could not see that the command registry was empty — which is how offline mode shipped inert, returning unknown-command for every command with a green suite behind it.",
       "guard": "npx vitest run src/cli/offline-registry.test.ts"
+    },
+    {
+      "path": "src/cli/offline-transport-unwind.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Proves open() closes the handle it opened when ensurePrivateDb or runMigrations throws, observed via a mocked closeDb."
     },
     {
       "path": "src/cli/offline-transport.test.ts",
@@ -408,6 +414,13 @@
       "status": "carried",
       "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). Registers the fork migration in the barrel.",
       "guard": "pnpm exec vitest run src/db/db-v2.test.ts src/cli/resources/groups-config.test.ts"
+    },
+    {
+      "path": "src/drivers/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "NANOCLAW_HOST_GATEWAY_IP - upstream v2.3.0 moved the host-gateway --add-host arg into the Docker driver's dockerNetworkArgs; the fork routes it through hostGatewayArgs() in container-runtime.ts so the remote-gateway override still applies.",
+      "guard": "pnpm exec vitest run src/container-runtime.host-gateway.test.ts"
     },
     {
       "path": "src/index.ts",
