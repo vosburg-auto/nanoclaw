@@ -226,12 +226,12 @@ export class OfflineTransport implements Transport {
 
   constructor(private readonly opts: { migrate?: boolean; dbPath?: string } = {}) {}
 
-  private open(): void {
+  private async open(): Promise<void> {
     if (this.opened) return;
     const dbPath = this.opts.dbPath ?? path.join(DATA_DIR, 'v2.db');
     assertHostNotRunning();
     if (!forced(process.env, FORCE_PERMS_ENV)) assertPrivateDb(dbPath);
-    const db = initDb(dbPath);
+    const db = await initDb(dbPath);
     // Everything after the handle exists must unwind it. ensurePrivateDb throws
     // on a failed chmod and runMigrations can throw for any number of reasons;
     // without this, either one leaves an open handle behind with `opened` still
@@ -239,9 +239,9 @@ export class OfflineTransport implements Transport {
     // path, but that is a cross-file courtesy, not this class's own contract.
     try {
       ensurePrivateDb(dbPath); // a DB we just created must not inherit a loose umask
-      if (this.opts.migrate) runMigrations(db);
+      if (this.opts.migrate) await runMigrations(db);
     } catch (e) {
-      this.close();
+      await this.close();
       throw e;
     }
     this.opened = true;
@@ -249,17 +249,17 @@ export class OfflineTransport implements Transport {
 
   async sendFrame(req: RequestFrame): Promise<ResponseFrame> {
     await loadCommands();
-    this.open();
+    await this.open();
     return dispatch(req, { caller: 'host' });
   }
 
-  close(): void {
+  async close(): Promise<void> {
     // NOT gated on `opened`: that flag is set only after initDb() returns, so a
     // throw between the handle opening and the flag being set would leak it —
     // exactly the window a failing offline command runs through. closeDb() on a
     // never-opened DB is a no-op, so the unconditional call is the safe one.
     try {
-      closeDb();
+      await closeDb();
     } catch {
       /* nothing useful to do while tearing down */
     }

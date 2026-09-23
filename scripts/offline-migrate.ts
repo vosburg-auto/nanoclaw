@@ -36,9 +36,9 @@ import {
 const dbPath = path.join(DATA_DIR, 'v2.db');
 const checkOnly = process.argv.includes('--check');
 
-export function appliedNames(): Set<string> {
+export async function appliedNames(): Promise<Set<string>> {
   try {
-    const rows = getDb().prepare('SELECT name FROM schema_version').all() as Array<{ name: string }>;
+    const rows = await getDb().all<{ name: string }>('SELECT name FROM schema_version');
     return new Set(rows.map((r) => r.name));
   } catch (e: unknown) {
     // ONLY "the table isn't there yet" may read as "nothing applied". A blanket
@@ -51,7 +51,7 @@ export function appliedNames(): Set<string> {
   }
 }
 
-export function main(): void {
+export async function main(): Promise<void> {
   // The SAME preconditions OfflineTransport.open() enforces, and MORE load-bearing
   // here: this path runs schema migrations. Migration 016 does a destructive
   // DROP + RENAME of messaging_groups with no down migration, so running it under
@@ -66,17 +66,17 @@ export function main(): void {
   // by the finally that closes it. ensurePrivateDb can throw (a failed chmod), and
   // when it sits outside, that throw leaks the handle.
   try {
-    initDb(dbPath);
+    await initDb(dbPath, { role: 'migration' });
     ensurePrivateDb(dbPath);
-    const before = appliedNames();
+    const before = await appliedNames();
 
     if (checkOnly) {
       process.stdout.write(`${dbPath}\n${before.size} migration(s) already applied; --check applied nothing.\n`);
       return;
     }
 
-    runMigrations(getDb());
-    const after = appliedNames();
+    await runMigrations(getDb(), undefined, { mode: 'migrate' });
+    const after = await appliedNames();
     const added = [...after].filter((n) => !before.has(n));
 
     process.stdout.write(
@@ -90,7 +90,7 @@ export function main(): void {
       ].join('\n'),
     );
   } finally {
-    closeDb();
+    await closeDb();
   }
 }
 
@@ -98,4 +98,4 @@ export function main(): void {
 // shell out, or exit. Mirrors the pattern the fork's .mjs scripts use.
 const invokedDirectly =
   process.argv[1] !== undefined && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
-if (invokedDirectly) main();
+if (invokedDirectly) await main();

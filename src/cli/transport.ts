@@ -11,7 +11,8 @@ export interface Transport {
    * Release any resources held by the transport. OPTIONAL — a socket transport
    * has nothing to release, but the offline transport holds an open SQLite
    * handle, and `process.exit()` would skip its WAL/journal cleanup. Callers
-   * should invoke it before exiting and must tolerate its absence.
+   * should invoke (and await) it before exiting and must tolerate its absence.
+   * Async since the central DB moved behind the async DbDriver.
    */
-  close?(): void;
+  close?(): void | Promise<void>;
 }
