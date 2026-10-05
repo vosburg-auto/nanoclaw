@@ -300,6 +300,9 @@ export class ClaudeProvider implements AgentProvider {
 
     async function* translateEvents(): AsyncGenerator<ProviderEvent> {
       let messageCount = 0;
+      // The SDK flags a failed API call on the synthetic assistant message
+      // (`error`, e.g. 'authentication_failed'); carried to the turn's result.
+      let assistantError: string | undefined;
       for await (const message of sdkResult) {
         if (aborted) return;
         messageCount++;
@@ -326,6 +329,8 @@ export class ClaudeProvider implements AgentProvider {
           // result reports. Blocks split across ASSISTANT MESSAGES (a tool
           // call between them) remain unparseable mid-turn by design; the
           // poll-loop's midTurnSent===0 fallback and wrap-nudge cover that.
+          const sdkError = (message as { error?: string }).error;
+          if (sdkError) assistantError = sdkError;
           const content = (message as { message?: { content?: Array<{ type?: string; text?: string }> } }).message
             ?.content;
           if (Array.isArray(content)) {
@@ -340,13 +345,21 @@ export class ClaudeProvider implements AgentProvider {
           // (e.g. a non-retryable 403 billing_error) carry their message in
           // `errors[]` instead. Keep that actionable notice separate from
           // model output so the poll-loop can deliver it without scratchpad.
-          const m = message as { result?: string; is_error?: boolean; errors?: string[] };
+          const m = message as {
+            result?: string;
+            is_error?: boolean;
+            errors?: string[];
+            api_error_status?: number | null;
+          };
           yield {
             type: 'result',
             text: m.result ?? null,
             isError: m.is_error === true,
             error: m.errors?.length ? m.errors.join('\n') : undefined,
+            ...(typeof m.api_error_status === 'number' && { errorStatus: m.api_error_status }),
+            ...(assistantError && { errorType: assistantError }),
           };
+          assistantError = undefined;
         } else if (message.type === 'system' && (message as { subtype?: string }).subtype === 'api_retry') {
           yield { type: 'error', message: 'API retry', retryable: true };
         } else if (message.type === 'rate_limit_event') {

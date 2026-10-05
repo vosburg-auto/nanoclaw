@@ -150,14 +150,35 @@ export interface RecurringMessage {
 // Failed occurrences (script-skip:error runs) re-arm too — a broken monitor
 // must keep its series alive so backoff can throttle it and the cap can pause
 // it; dropping the row would silently kill the series on first script error.
-// 'failed:auth' runs re-arm on plain cron, so the series resumes by itself
-// once the credential is replaced.
+// 'failed:agent' runs (the agent run itself errored) re-arm on the plain cron,
+// so a series resumes by itself once the provider or credential recovers.
 export function getCompletedRecurring(db: Database.Database): RecurringMessage[] {
   return db
     .prepare(
-      "SELECT * FROM messages_in WHERE status IN ('completed', 'failed', 'failed:auth') AND recurrence IS NOT NULL",
+      "SELECT * FROM messages_in WHERE status IN ('completed', 'failed', 'failed:agent') AND recurrence IS NOT NULL",
     )
     .all() as RecurringMessage[];
+}
+
+/**
+ * Trailing consecutive 'failed:agent' occurrences across the session's task
+ * rows (newest backwards until the first other settled run) — the host's own
+ * evidence that a run_failure_alert describes a real failure streak.
+ */
+export function trailingAgentFailures(db: Database.Database): number {
+  const rows = db
+    .prepare(
+      `SELECT status FROM messages_in
+        WHERE kind = 'task' AND status IN ('completed', 'failed', 'failed:agent')
+        ORDER BY seq DESC`,
+    )
+    .all() as Array<{ status: string }>;
+  let streak = 0;
+  for (const r of rows) {
+    if (r.status !== 'failed:agent') break;
+    streak++;
+  }
+  return streak;
 }
 
 /**
@@ -166,11 +187,11 @@ export function getCompletedRecurring(db: Database.Database): RecurringMessage[]
  * the occurrence history, no stored counter to update or reset. Deliberately
  * counts ANY failed occurrence (script-skip:error acks AND stuck-message
  * failures from host-sweep's MAX_TRIES path): a series failing for either
- * reason should throttle, not spin. 'failed:auth' occurrences (the model
- * provider rejected the credential) are deliberately invisible here — neither
- * counted nor streak-breaking: the series cannot fix that itself, so backing
- * it off or auto-pausing it would only keep it dead after the credential is
- * replaced. They still count in failed_runs.
+ * reason should throttle, not spin. 'failed:agent' occurrences (the agent
+ * run itself errored — provider outage, rejected credential) are deliberately
+ * invisible here, neither counted nor streak-breaking: backing the series off
+ * or auto-pausing it would only keep it dead after the provider recovers.
+ * They still count in failed_runs, and the runner alerts on them.
  */
 export function trailingFailedRuns(db: Database.Database, seriesKey: string): number {
   const rows = db

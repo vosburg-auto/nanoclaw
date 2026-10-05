@@ -21,12 +21,9 @@ import type { Session } from '../../types.js';
 import type { InboundMailbox } from '../../mailbox/index.js';
 import { appendRunLog } from './run-log.js';
 
-// Consecutive failed runs — a pre-task script erroring, or the agent run
-// itself ending in an error (the series' trailing FAILED runs — derived from
-// occurrence rows, no stored counter) — throttle a broken series instead of
-// letting it wake a container at raw cron cadence forever. A run the model
-// provider refused for its credential ('failed:auth') is exempt: the series
-// cannot fix that, and must resume by itself once the credential is replaced.
+// Consecutive pre-task-script failures (the series' trailing FAILED runs —
+// derived from occurrence rows, no stored counter) throttle a broken monitor
+// script instead of letting it wake a container at raw cron cadence forever.
 // A deliberate wakeAgent=false gate is a normal completed run and never backs
 // off. Mirrors the stuck-message retry in host-sweep.ts (BACKOFF_BASE_MS
 // doubling, MAX_TRIES → failed): fail loud, don't spin.
@@ -84,9 +81,9 @@ export async function handleRecurrence(inDb: InboundMailbox, session: Session): 
         await appendHostTaskNote(
           session.agent_group_id,
           msg.seriesId,
-          `auto-paused after ${scriptFails} consecutive failed runs (host); fix the cause (script or agent error, see above), then \`ncl tasks resume ${msg.seriesId}\``,
+          `auto-paused after ${scriptFails} consecutive script failures (host); fix the script, then \`ncl tasks resume ${msg.seriesId}\``,
         );
-        log.warn('Task series auto-paused: runs keep failing', {
+        log.warn('Task series auto-paused: script keeps failing', {
           seriesId: msg.seriesId,
           scriptFails,
           sessionId: session.id,

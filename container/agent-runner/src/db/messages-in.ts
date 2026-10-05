@@ -93,9 +93,9 @@ export function markScriptSkipped(skips: Array<{ id: string; reason: string }>):
   getAgentMailbox().operations.markScriptSkipped(skips);
 }
 
-/** `auth`: the model provider rejected the credential — a failed run the host keeps out of its backoff streak. */
-export function markFailed(ids: string[], auth = false): void {
-  if (ids.length > 0) getAgentMailbox().operations.markMessages(ids, auth ? 'failed:auth' : 'failed');
+/** The agent run itself errored: a failed run the host keeps out of its script-failure backoff streak. */
+export function markFailed(ids: string[]): void {
+  if (ids.length > 0) getAgentMailbox().operations.markMessages(ids, 'failed:agent');
 }
 
 export function getMessageIn(id: string): MessageInRow | undefined {

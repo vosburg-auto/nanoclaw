@@ -470,9 +470,9 @@ export async function processQuery(
     publishReplyRoute(routing);
     answering = true;
   };
-  const failTurn = (ids: string[], auth: boolean): void => {
+  const failTurn = (ids: string[]): void => {
     for (const id of ids) failedIds.add(id);
-    markFailed(ids, auth);
+    markFailed(ids);
   };
   // A retry is another provider input, behind any follow-ups already pushed.
   // Preserve its original route, prompt and retry guards until it is answered.
@@ -648,9 +648,16 @@ export async function processQuery(
         // this turn's batch 'failed' instead, so it counts as a failed run.
         const resultText = event.text ?? '';
         const failed = event.isError === true;
-        if (failed) failTurn(turnIds, authFailureDetail(event.error, resultText) !== null);
+        const authDetail = failed
+          ? authFailureDetail({
+              status: event.errorStatus,
+              errorType: event.errorType,
+              texts: [event.error, resultText],
+            })
+          : null;
+        if (failed) failTurn(turnIds);
         markCompleted(initialBatchIds.filter((id) => !failedIds.has(id)));
-        await recordRunOutcome({ failed, taskRun: routing.taskRun === true, texts: [event.error, resultText] });
+        await recordRunOutcome({ failed, taskRun: routing.taskRun === true, authDetail });
         if (resultText || failed) {
           const { hasUnwrapped, taskBlocks } = await dispatchResultText(resultText, routing, {
             midTurnSent,
@@ -684,7 +691,7 @@ export async function processQuery(
             // Only the provider's dedicated error field is channel content —
             // plus, for a rejected credential, the one short line saying so;
             // unwrapped model output and raw diagnostics remain private.
-            await deliverErrorResult(routing, failureNotice(event.error, resultText));
+            await deliverErrorResult(routing, failureNotice(authDetail, event.error));
           }
           // An unwrapped final text only warrants the wrap-nudge when NOTHING
           // was delivered this turn — hasUnwrapped already folds in the
@@ -758,17 +765,14 @@ export async function processQuery(
       // The abandoned turns did not run: ack them 'failed' (they were acked
       // completed or are about to be), and count an abandoned task run
       // toward the failure streak — its alert is the only human signal.
-      const authDetail = authFailureDetail(errMsg);
+      const authDetail = authFailureDetail({ texts: [errMsg] });
       try {
-        failTurn(
-          abandoned.flatMap((turn) => turn.ids),
-          authDetail !== null,
-        );
+        failTurn(abandoned.flatMap((turn) => turn.ids));
       } catch (ackError) {
         log(`Failed to ack abandoned turns failed: ${ackError instanceof Error ? ackError.message : String(ackError)}`);
       }
       if (failedRoutes.some((target) => target.taskRun)) {
-        await recordRunOutcome({ failed: true, taskRun: true, texts: [errMsg] });
+        await recordRunOutcome({ failed: true, taskRun: true, authDetail });
       }
       const notice = authDetail ? authFailureNotice(authDetail) : GENERIC_FAILURE_NOTICE;
       const noticed: RoutingContext[] = [];

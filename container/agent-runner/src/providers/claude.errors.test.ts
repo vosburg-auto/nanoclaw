@@ -110,3 +110,36 @@ it('keeps a Claude task billing failure in its task log and out of chat', async 
   ]);
   expect(pushes).toHaveLength(0);
 });
+
+it('forwards the SDK structured auth signal (api_error_status, assistant error class) on the result event', async () => {
+  sdkMessages.push({ type: 'system', subtype: 'init', session_id: 'auth-session' });
+  sdkMessages.push({
+    type: 'assistant',
+    error: 'authentication_failed',
+    message: { content: [{ type: 'text', text: 'Failed to authenticate. API Error: 401 token revoked' }] },
+  });
+  sdkMessages.push({
+    type: 'result',
+    subtype: 'success',
+    is_error: true,
+    api_error_status: 401,
+    result: 'Failed to authenticate. API Error: 401 token revoked',
+  });
+  const provider = createProvider('claude');
+  provider.registerMemorySessionHook(MEMORY_SESSION_HOOK);
+  const query = provider.query({ prompt: 'scheduled work', cwd: tmp });
+
+  const results = [];
+  for await (const event of query.events) if (event.type === 'result') results.push(event);
+
+  expect(results).toEqual([
+    {
+      type: 'result',
+      text: 'Failed to authenticate. API Error: 401 token revoked',
+      isError: true,
+      error: undefined,
+      errorStatus: 401,
+      errorType: 'authentication_failed',
+    },
+  ]);
+});

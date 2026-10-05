@@ -74,7 +74,7 @@ export function sqliteMarkCompleted(ids: string[]): void {
   mark(ids, 'completed');
 }
 
-export function sqliteMarkFailed(id: string, status: 'failed' | 'failed:auth' = 'failed'): void {
+export function sqliteMarkFailed(id: string, status: 'failed' | 'failed:agent' = 'failed'): void {
   mark([id], status);
 }
 

@@ -1,9 +1,10 @@
 /**
  * Run-failure visibility (orin-ops#700): a failed agent turn is acked
- * 'failed' — 'failed:auth' when the credential was rejected — so the host
- * counts it, and a failing scheduled task alerts its
- * admin out of band — once per streak, immediately when the credential was
- * rejected. Drives the REAL processQuery / runPollLoop call sites.
+ * 'failed:agent' (so the host counts it, outside the script backoff streak),
+ * and a failing scheduled task alerts its admin out of band — immediately when
+ * the credential was rejected, else at the second failure; then at most once
+ * per 24h while the streak lasts. Drives the REAL processQuery / runPollLoop
+ * call sites.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
@@ -11,7 +12,7 @@ import { getUndeliveredMessages } from './db/messages-out.js';
 import { closeSessionDb, getInboundDb, getOutboundDb, initTestSessionDb } from './mailbox/sqlite/connection.js';
 import { processQuery, runPollLoop } from './poll-loop.js';
 import type { AgentProvider, AgentQuery, ProviderEvent } from './providers/types.js';
-import { authFailureDetail, isAuthFailure, nextFailureStreak } from './run-failure.js';
+import { FAILURE_REALERT_MS, authFailureDetail, isAuthFailure, nextFailureStreak } from './run-failure.js';
 
 // The incident's literal SDK result text.
 const REVOKED = 'Failed to authenticate. API Error: 401 OAuth access token has been revoked.';
@@ -57,7 +58,7 @@ function ackStatus(id: string): string | undefined {
   )?.status;
 }
 
-function alerts(): Array<{ action: string; text: string; authFailure: boolean }> {
+function alerts(): Array<{ action: string; authFailure: boolean; detail?: string }> {
   return getUndeliveredMessages()
     .filter((row) => row.kind === 'system')
     .map((row) => JSON.parse(row.content))
@@ -68,11 +69,27 @@ const authError: ProviderEvent = { type: 'result', text: REVOKED, isError: true 
 const otherError: ProviderEvent = { type: 'result', text: 'API Error: 529 Overloaded', isError: true };
 const success: ProviderEvent = { type: 'result', text: 'all quiet' };
 
-describe('isAuthFailure', () => {
+async function waitFor(predicate: () => boolean): Promise<void> {
+  const deadline = Date.now() + 2500;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error('Timed out waiting for the follow-up push');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
+function insertTask(id: string): void {
+  getInboundDb()
+    .prepare(
+      `INSERT INTO messages_in (id, kind, timestamp, status, trigger, content)
+       VALUES (?, 'task', ?, 'pending', 1, ?)`,
+    )
+    .run(id, new Date().toISOString(), JSON.stringify({ prompt: 'run the report' }));
+}
+
+describe('isAuthFailure (text fallback)', () => {
   it.each([
     REVOKED,
     'API Error: 401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}',
-    'HTTP 401 Unauthorized',
     'OAuth token has expired. Please obtain a new token.',
     'Invalid API key · Please run /login',
     'API Error: 403 {"error":{"type":"forbidden","message":"OAuth authentication is not allowed for this organization"}}',
@@ -87,6 +104,9 @@ describe('isAuthFailure', () => {
     'API Error: 500 Internal server error',
     'Prompt is too long: 250000 tokens > 200000 maximum',
     'invalid_request_error: max_tokens: Invalid value for max_tokens',
+    '400 invalid max tokens',
+    'GitHub token was revoked',
+    'HTTP 401 Unauthorized from https://api.github.com',
     'OpenCode prompt failed: {"responseHeaders":{"authorization":"fixture-secret"}}',
     'Out of credits [seven_day]',
     '',
@@ -95,54 +115,109 @@ describe('isAuthFailure', () => {
   ])('does not classify %s as auth', (text) => {
     expect(isAuthFailure(text)).toBe(false);
   });
+});
 
-  it('quotes only the matching line, masked and capped', () => {
-    const detail = authFailureDetail(
-      `stack line\nAuthorization: Bearer abc.def failed to authenticate ${'x'.repeat(300)}`,
-    );
+describe('authFailureDetail (structured signal first)', () => {
+  it('auth from the structured signal alone: HTTP 401, or an auth error class (also on a 403)', () => {
+    expect(authFailureDetail({ status: 401, texts: ['request failed'] })).toBe('request failed');
+    expect(authFailureDetail({ errorType: 'authentication_failed', texts: [] })).toBe('authentication_failed');
+    expect(authFailureDetail({ status: 403, errorType: 'oauth_org_not_allowed', texts: [] })).not.toBeNull();
+  });
+
+  it('a structured non-auth signal wins over auth-looking text', () => {
+    expect(authFailureDetail({ status: 529, errorType: 'overloaded', texts: [REVOKED] })).toBeNull();
+    expect(authFailureDetail({ status: 403, errorType: 'billing_error', texts: ['API Error: 403 oauth'] })).toBeNull();
+    expect(authFailureDetail({ status: 403, texts: ['API Error: 403 OAuth authentication'] })).toBeNull();
+  });
+
+  it('falls back to the text only without a structured signal', () => {
+    expect(authFailureDetail({ texts: [REVOKED] })).toBe(REVOKED);
+    expect(authFailureDetail({ errorType: 'unknown', texts: [REVOKED] })).toBe(REVOKED);
+    expect(authFailureDetail({ texts: ['API Error: 529 Overloaded'] })).toBeNull();
+  });
+
+  it('quotes only the auth line, masked and capped', () => {
+    const detail = authFailureDetail({
+      texts: [`stack line\nAuthorization: Bearer abc.def failed to authenticate ${'x'.repeat(300)}`],
+    });
     expect(detail).not.toContain('stack line');
     expect(detail).not.toContain('abc.def');
     expect(detail!.length).toBeLessThanOrEqual(200);
-    expect(authFailureDetail(undefined, 'API Error: 529 Overloaded')).toBeNull();
   });
 });
 
 describe('nextFailureStreak', () => {
-  it('alerts once per streak: at once on auth, else at the second failure; success resets', () => {
-    let s = nextFailureStreak(null, { failed: true, auth: false });
-    expect(s).toEqual({ streak: { failures: 1, alerted: false }, alert: false });
-    s = nextFailureStreak(s.streak, { failed: true, auth: false });
-    expect(s).toEqual({ streak: { failures: 2, alerted: true }, alert: true });
-    s = nextFailureStreak(s.streak, { failed: true, auth: true });
-    expect(s.alert).toBe(false);
-    expect(nextFailureStreak(s.streak, { failed: false, auth: false })).toEqual({ streak: null, alert: false });
-    expect(nextFailureStreak(null, { failed: true, auth: true }).alert).toBe(true);
+  const t0 = Date.parse('2026-10-03T20:14:00.000Z');
+
+  it('alerts at once on auth, else at the second failure; success resets', () => {
+    let s = nextFailureStreak(null, { failed: true, auth: false }, t0);
+    expect(s).toEqual({ streak: { failures: 1, lastAlertAt: null }, alert: false });
+    s = nextFailureStreak(s.streak, { failed: true, auth: false }, t0);
+    expect(s).toEqual({ streak: { failures: 2, lastAlertAt: new Date(t0).toISOString() }, alert: true });
+    expect(nextFailureStreak(s.streak, { failed: false, auth: false }, t0)).toEqual({ streak: null, alert: false });
+    expect(nextFailureStreak(null, { failed: true, auth: true }, t0).alert).toBe(true);
+  });
+
+  it('re-alerts a continuing streak only once 24h have passed since the last alert', () => {
+    const first = nextFailureStreak(null, { failed: true, auth: true }, t0);
+    const soon = nextFailureStreak(first.streak, { failed: true, auth: true }, t0 + FAILURE_REALERT_MS - 1);
+    expect(soon.alert).toBe(false);
+    expect(soon.streak!.lastAlertAt).toBe(new Date(t0).toISOString());
+    const later = nextFailureStreak(soon.streak, { failed: true, auth: true }, t0 + FAILURE_REALERT_MS);
+    expect(later.alert).toBe(true);
+    expect(later.streak!.lastAlertAt).toBe(new Date(t0 + FAILURE_REALERT_MS).toISOString());
   });
 });
 
 describe('task run failures (real processQuery)', () => {
-  it('a 401 result acks the occurrence failed:auth, logs it FAILED and alerts once with the credential wording', async () => {
+  it('a 401 result acks the occurrence failed:agent, logs it FAILED and writes one auth alert row', async () => {
     await taskRun('t1', authError);
 
-    expect(ackStatus('t1')).toBe('failed:auth');
+    expect(ackStatus('t1')).toBe('failed:agent');
     const logs = getUndeliveredMessages().filter((row) => row.kind === 'task_log');
     expect(logs.map((row) => JSON.parse(row.content).text)).toEqual([`FAILED: ${REVOKED}`]);
-    const sent = alerts();
-    expect(sent).toHaveLength(1);
-    expect(sent[0].authFailure).toBe(true);
-    expect(sent[0].text).toContain('Scheduled task "morning-report-a1b2" failed.');
-    expect(sent[0].text).toContain(`rejected this agent's credential: "${REVOKED}"`);
-    expect(sent[0].text).toContain('restarting the agent will not fix it');
+    // Facts only — the host words the notice from its own template.
+    expect(alerts()).toEqual([{ action: 'run_failure_alert', authFailure: true, detail: REVOKED }]);
     // Nothing reached a chat — task runs have no channel.
     expect(getUndeliveredMessages().filter((row) => row.kind === 'chat')).toHaveLength(0);
+  });
+
+  it('the provider structured signal alone makes a failure auth-class (status 401, or an auth error class)', async () => {
+    await taskRun('t1', { type: 'result', text: 'request failed', isError: true, errorStatus: 401 });
+    await taskRun('m9', success);
+    await taskRun('t2', { type: 'result', text: null, isError: true, errorType: 'authentication_failed' });
+    await taskRun('m10', success);
+    // ...and a structured non-auth signal overrides auth-looking text.
+    await taskRun('t3', { type: 'result', text: REVOKED, isError: true, errorStatus: 529, errorType: 'overloaded' });
+
+    expect(alerts()).toEqual([
+      { action: 'run_failure_alert', authFailure: true, detail: 'request failed' },
+      { action: 'run_failure_alert', authFailure: true, detail: 'authentication_failed' },
+    ]);
   });
 
   it('a second consecutive 401 (fresh container) does not alert again', async () => {
     await taskRun('t1', authError);
     await taskRun('t2', authError);
 
-    expect(ackStatus('t2')).toBe('failed:auth');
+    expect(ackStatus('t2')).toBe('failed:agent');
     expect(alerts()).toHaveLength(1);
+  });
+
+  it('a streak still failing 24h after its alert alerts again (a lost delivery is not final)', async () => {
+    await taskRun('t1', authError);
+    const state = getOutboundDb().prepare("SELECT value FROM session_state WHERE key = 'run_failure_streak'").get() as {
+      value: string;
+    };
+    const streak = JSON.parse(state.value) as { failures: number; lastAlertAt: string };
+    streak.lastAlertAt = new Date(Date.now() - FAILURE_REALERT_MS - 1000).toISOString();
+    getOutboundDb()
+      .prepare("UPDATE session_state SET value = ? WHERE key = 'run_failure_streak'")
+      .run(JSON.stringify(streak));
+
+    await taskRun('t2', authError);
+
+    expect(alerts()).toHaveLength(2);
   });
 
   it('a successful run of any kind ends the streak, so the next failure streak alerts again', async () => {
@@ -158,14 +233,9 @@ describe('task run failures (real processQuery)', () => {
     expect(alerts()).toHaveLength(0);
 
     await taskRun('t2', otherError);
-    // Non-auth failures keep the plain status, so they feed the host's backoff streak.
-    expect(ackStatus('t2')).toBe('failed');
-    const sent = alerts();
-    expect(sent).toHaveLength(1);
-    expect(sent[0].authFailure).toBe(false);
-    expect(sent[0].text).toContain('has failed 2 runs in a row');
+    expect(ackStatus('t2')).toBe('failed:agent');
     // Diagnostics stay in the run log, not the alert.
-    expect(sent[0].text).not.toContain('Overloaded');
+    expect(alerts()).toEqual([{ action: 'run_failure_alert', authFailure: false }]);
 
     await taskRun('t3', otherError);
     expect(alerts()).toHaveLength(1);
@@ -197,7 +267,7 @@ describe('chat turn failures', () => {
   it('a 401 tells the chat the credential was rejected, acks failed, and raises no alert', async () => {
     await chatTurn('m1', authError);
 
-    expect(ackStatus('m1')).toBe('failed:auth');
+    expect(ackStatus('m1')).toBe('failed:agent');
     const chats = getUndeliveredMessages().filter((row) => row.kind === 'chat');
     expect(chats).toHaveLength(1);
     expect(JSON.parse(chats[0].content).text).toBe(
@@ -216,15 +286,6 @@ describe('chat turn failures', () => {
 });
 
 describe('runPollLoop acks', () => {
-  function insertTask(id: string): void {
-    getInboundDb()
-      .prepare(
-        `INSERT INTO messages_in (id, kind, timestamp, status, trigger, content)
-         VALUES (?, 'task', ?, 'pending', 1, ?)`,
-      )
-      .run(id, new Date().toISOString(), JSON.stringify({ prompt: 'run the report' }));
-  }
-
   async function runOnce(events: () => AsyncGenerator<ProviderEvent>): Promise<void> {
     const controller = new AbortController();
     const provider: AgentProvider = {
@@ -243,7 +304,7 @@ describe('runPollLoop acks', () => {
       yield authError;
     });
 
-    expect(ackStatus('t1')).toBe('failed:auth');
+    expect(ackStatus('t1')).toBe('failed:agent');
     expect(alerts()).toHaveLength(1);
   });
 
@@ -254,8 +315,69 @@ describe('runPollLoop acks', () => {
       throw new Error(REVOKED);
     });
 
-    expect(ackStatus('t1')).toBe('failed:auth');
+    expect(ackStatus('t1')).toBe('failed:agent');
     expect(alerts()).toHaveLength(1);
     expect(alerts()[0].authFailure).toBe(true);
+  });
+});
+
+describe('follow-up and abandoned turns (real processQuery, warm query)', () => {
+  function warmQuery(events: (pushes: string[]) => AsyncGenerator<ProviderEvent>): {
+    query: AgentQuery;
+    pushes: string[];
+  } {
+    const pushes: string[] = [];
+    return {
+      pushes,
+      query: { push: (m) => pushes.push(m), end: () => {}, events: events(pushes), abort: () => {} },
+    };
+  }
+
+  it('success, then a follow-up whose result errors: first batch completed, follow-up failed:agent', async () => {
+    const { query } = warmQuery(async function* (pushes) {
+      yield { type: 'init', continuation: 'sess-1' };
+      yield success;
+      insertTask('t2');
+      await waitFor(() => pushes.length === 1);
+      // Acked completed at push time — the error must override it.
+      expect(ackStatus('t2')).toBe('completed');
+      yield otherError;
+    });
+
+    await processQuery(query, { ...TASK, inReplyTo: 't1' }, ['t1'], 'claude', undefined, 'prompt', undefined);
+
+    expect(ackStatus('t1')).toBe('completed');
+    expect(ackStatus('t2')).toBe('failed:agent');
+  });
+
+  it('a follow-up queued behind an answering turn, whose own result errors, is acked failed:agent', async () => {
+    const { query } = warmQuery(async function* (pushes) {
+      yield { type: 'init', continuation: 'sess-1' };
+      insertTask('t2');
+      await waitFor(() => pushes.length === 1);
+      yield success; // answers t1
+      yield otherError; // answers queued t2
+    });
+
+    await processQuery(query, { ...TASK, inReplyTo: 't1' }, ['t1'], 'claude', undefined, 'prompt', undefined);
+
+    expect(ackStatus('t1')).toBe('completed');
+    expect(ackStatus('t2')).toBe('failed:agent');
+  });
+
+  it('a crash with a queued turn acks both the answering and the queued batch failed:agent', async () => {
+    const { query } = warmQuery(async function* (pushes) {
+      yield { type: 'init', continuation: 'sess-1' };
+      insertTask('t2');
+      await waitFor(() => pushes.length === 1);
+      throw new Error('API Error: 529 Overloaded');
+    });
+
+    await expect(
+      processQuery(query, { ...TASK, inReplyTo: 't1' }, ['t1'], 'claude', undefined, 'prompt', undefined),
+    ).rejects.toThrow('Overloaded');
+
+    expect(ackStatus('t1')).toBe('failed:agent');
+    expect(ackStatus('t2')).toBe('failed:agent');
   });
 });

@@ -170,8 +170,19 @@ export type ProviderEvent =
    * `text` is model output; `error` is an optional user-facing provider error
    * (e.g. a billing/quota notice), kept separate from model scratchpad and
    * raw diagnostics. Failures without `error` receive a generic notice.
+   * `errorStatus` / `errorType` are the provider's structured failure signal
+   * when it has one (HTTP status of the failed API call; provider error
+   * class, e.g. Claude's 'authentication_failed') — preferred over text when
+   * classifying a failure.
    */
-  | { type: 'result'; text: string | null; isError?: boolean; error?: string }
+  | {
+      type: 'result';
+      text: string | null;
+      isError?: boolean;
+      error?: string;
+      errorStatus?: number;
+      errorType?: string;
+    }
   /**
    * An assistant text segment emitted mid-turn (e.g. between tool calls).
    * The SDK's final `result` carries only the LAST assistant text, so a

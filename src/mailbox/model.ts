@@ -19,10 +19,11 @@ export function parseIsoTimestamp(value: unknown): IsoTimestamp {
   return value as IsoTimestamp;
 }
 
-// 'failed:auth': an agent run the model provider refused for its credential.
-// A failed run like 'failed', but never part of the backoff/auto-pause streak.
-export type ProcessingStatus = 'processing' | 'completed' | 'failed' | 'failed:auth' | 'script-skip:error';
-export type TaskStatus = 'pending' | 'paused' | 'completed' | 'failed' | 'failed:auth' | 'cancelled';
+// 'failed:agent': the agent run itself ended in an error (provider, credential,
+// crashed query). A failed run like 'failed' — counted in failed_runs, re-armed
+// — but never part of the pre-task-script backoff/auto-pause streak.
+export type ProcessingStatus = 'processing' | 'completed' | 'failed' | 'failed:agent' | 'script-skip:error';
+export type TaskStatus = 'pending' | 'paused' | 'completed' | 'failed' | 'failed:agent' | 'cancelled';
 export type InboundStatus = TaskStatus | 'processing';
 
 const INBOUND_KINDS = ['chat', 'chat-sdk', 'task', 'webhook', 'system'] as const;
@@ -347,7 +348,7 @@ export function parseInboundRecord(value: unknown): InboundRecord {
       'processing',
       'completed',
       'failed',
-      'failed:auth',
+      'failed:agent',
       'cancelled',
     ] as const),
     processAfter: nullableTimestamp(record, 'processAfter'),
@@ -462,7 +463,13 @@ export function parseProcessingAckRecord(value: unknown): ProcessingAckRecord {
   const record = strictRecord(value, 'ProcessingAckRecord', ['messageId', 'status', 'statusChanged']);
   return {
     messageId: text(record, 'messageId'),
-    status: oneOf(record, 'status', ['processing', 'completed', 'failed', 'failed:auth', 'script-skip:error'] as const),
+    status: oneOf(record, 'status', [
+      'processing',
+      'completed',
+      'failed',
+      'failed:agent',
+      'script-skip:error',
+    ] as const),
     statusChanged: timestamp(record, 'statusChanged'),
   };
 }
@@ -550,7 +557,7 @@ export function parseTaskRecord(value: unknown): TaskRecord {
   return {
     id: text(record, 'id'),
     seriesId: nullableText(record, 'seriesId'),
-    status: oneOf(record, 'status', ['pending', 'paused', 'completed', 'failed', 'failed:auth', 'cancelled'] as const),
+    status: oneOf(record, 'status', ['pending', 'paused', 'completed', 'failed', 'failed:agent', 'cancelled'] as const),
     processAfter: nullableTimestamp(record, 'processAfter'),
     recurrence: nullableText(record, 'recurrence'),
     content: text(record, 'content'),
