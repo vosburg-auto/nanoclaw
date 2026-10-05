@@ -115,8 +115,6 @@ export interface InboundMailbox {
   getTaskStats(seriesId: string): TaskStats;
   getCompletedRecurring(): RecurringMessage[];
   trailingFailedRuns(seriesId: string): number;
-  /** Trailing 'failed:agent' task occurrences in this session (0 when the latest settled run did not fail that way). */
-  trailingAgentFailures(): number;
   clearRecurrence(messageId: string): void;
   /**
    * Atomically insert a series' next occurrence and clear the recurrence on

@@ -135,25 +135,6 @@ describe("runner 'failed:agent' ack", () => {
     expect(rows[0]).toMatchObject({ id: 'task-1', status: 'failed:agent', recurrence: null });
     expect(rows[1]).toMatchObject({ status: 'pending', recurrence: '0 9 * * *' });
   });
-
-  it('trailingAgentFailures counts the trailing failed agent runs, stopping at any other settled run', () => {
-    const db = freshDb();
-    const inbound = wrapSqliteInbound(db);
-    expect(inbound.trailingAgentFailures()).toBe(0);
-    for (const [i, status] of (['failed:agent', 'completed', 'failed:agent', 'failed:agent'] as const).entries()) {
-      insertTaskRow(db, {
-        id: `occ-${i}`,
-        seriesId: 'task-1',
-        processAfter: '2020-01-01T00:00:00.000Z',
-        recurrence: null,
-        content: JSON.stringify({ prompt: 'morning report' }),
-      });
-      inbound.applyProcessingAcks(ack(status, `occ-${i}`));
-    }
-    expect(inbound.trailingAgentFailures()).toBe(2);
-    inbound.applyProcessingAcks(ack('script-skip:error', 'task-1'));
-    expect(inbound.trailingAgentFailures()).toBe(2); // task-1 is the OLDEST row
-  });
 });
 
 /**

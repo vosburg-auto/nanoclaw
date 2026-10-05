@@ -58,7 +58,7 @@ function ackStatus(id: string): string | undefined {
   )?.status;
 }
 
-function alerts(): Array<{ action: string; authFailure: boolean; detail?: string }> {
+function alerts(): Array<Record<string, unknown>> {
   return getUndeliveredMessages()
     .filter((row) => row.kind === 'system')
     .map((row) => JSON.parse(row.content))
@@ -176,8 +176,8 @@ describe('task run failures (real processQuery)', () => {
     expect(ackStatus('t1')).toBe('failed:agent');
     const logs = getUndeliveredMessages().filter((row) => row.kind === 'task_log');
     expect(logs.map((row) => JSON.parse(row.content).text)).toEqual([`FAILED: ${REVOKED}`]);
-    // Facts only — the host words the notice from its own template.
-    expect(alerts()).toEqual([{ action: 'run_failure_alert', authFailure: true, detail: REVOKED }]);
+    // Structured facts only, never error text — the host words the notice from its own template.
+    expect(alerts()).toEqual([{ action: 'run_failure_alert', authFailure: true }]);
     // Nothing reached a chat — task runs have no channel.
     expect(getUndeliveredMessages().filter((row) => row.kind === 'chat')).toHaveLength(0);
   });
@@ -191,8 +191,8 @@ describe('task run failures (real processQuery)', () => {
     await taskRun('t3', { type: 'result', text: REVOKED, isError: true, errorStatus: 529, errorType: 'overloaded' });
 
     expect(alerts()).toEqual([
-      { action: 'run_failure_alert', authFailure: true, detail: 'request failed' },
-      { action: 'run_failure_alert', authFailure: true, detail: 'authentication_failed' },
+      { action: 'run_failure_alert', authFailure: true, errorStatus: 401 },
+      { action: 'run_failure_alert', authFailure: true, errorType: 'authentication_failed' },
     ]);
   });
 

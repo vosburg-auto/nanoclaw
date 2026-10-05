@@ -47,7 +47,6 @@ import {
   insertTaskRow,
   pauseTask,
   resumeTask,
-  trailingAgentFailures,
   trailingFailedRuns,
   updateTask,
 } from './tasks.js';
@@ -251,7 +250,6 @@ export function wrapSqliteInbound(db: Database.Database, nextSequence = () => ne
         seriesId: row.series_id,
       })),
     trailingFailedRuns: (seriesId) => trailingFailedRuns(db, seriesId),
-    trailingAgentFailures: () => trailingAgentFailures(db),
     clearRecurrence: (messageId) => clearRecurrence(db, messageId),
     countLiveTasks: () =>
       (

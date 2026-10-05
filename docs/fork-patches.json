@@ -156,13 +156,13 @@
       "path": "container/agent-runner/src/run-failure.test.ts",
       "kind": "test",
       "status": "carried",
-      "intent": "Guards orin-ops#700 through the real processQuery/runPollLoop: 401 -> ack failed:agent + one auth alert row; structured signal (status 401 / auth error class) first, structured non-auth wins over text, regex fallback with negatives ('GitHub token was revoked', '400 invalid max tokens'); no second alert within 24h, a re-alert after 24h; success resets; 2 non-auth errors -> one alert; normal run unchanged; follow-up / queued / crash-abandoned turn acks."
+      "intent": "Guards orin-ops#700 through the real processQuery/runPollLoop: 401 -> ack failed:agent + one facts-only auth alert row; structured signal (status 401 / auth error class) first, structured non-auth wins over text, regex fallback with negatives ('GitHub token was revoked', '400 invalid max tokens'); no second alert within 24h, a re-alert after 24h; success resets; 2 non-auth errors -> one alert; normal run unchanged; follow-up / queued / crash-abandoned turn acks."
     },
     {
       "path": "container/agent-runner/src/run-failure.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "orin-ops#700 (20h silent credential outage): auth classification (SDK structured signal first, anchored regex fallback), credential-rejected notice text, and the per-session failure streak (session_state `run_failure_streak` {failures, lastAlertAt}) that writes a facts-only `run_failure_alert` row - immediately on auth, else at 2 consecutive failed task runs; at most once per 24h while the streak lasts.",
+      "intent": "orin-ops#700 (20h silent credential outage): auth classification (SDK structured signal first, anchored regex fallback), credential-rejected chat notice text, and the per-session failure streak (session_state `run_failure_streak` {failures, lastAlertAt}) that writes a `run_failure_alert` row of structured facts only (authFailure, errorStatus, errorType) - immediately on auth, else at 2 consecutive failed task runs; at most once per 24h while the streak lasts.",
       "guard": "cd container/agent-runner && bun test src/run-failure.test.ts"
     },
     {
@@ -521,14 +521,14 @@
       "path": "src/mailbox/sqlite/index.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "applyProcessingAcks maps a runner 'failed:agent' ack to messages_in 'failed:agent' (errored agent runs were recorded completed and failed_runs stayed 0), lets it override a prior 'completed' (warm follow-ups are acked at push time) and never lets 'completed' overwrite it; failed_runs counts it; exposes trailingAgentFailures. orin-ops#700.",
+      "intent": "applyProcessingAcks maps a runner 'failed:agent' ack to messages_in 'failed:agent' (errored agent runs were recorded completed and failed_runs stayed 0), lets it override a prior 'completed' (warm follow-ups are acked at push time) and never lets 'completed' overwrite it; failed_runs counts it. orin-ops#700.",
       "guard": "pnpm exec vitest run src/mailbox/sqlite/run-failure-acks.test.ts"
     },
     {
       "path": "src/mailbox/sqlite/run-failure-acks.test.ts",
       "kind": "test",
       "status": "carried",
-      "intent": "Guards the 'failed:agent' ack mapping, the completed override, failed_runs counting, re-arm, trailingAgentFailures, and the exemption: 10 consecutive failed agent runs never back off or auto-pause, while pre-task script failures still back off and pause at 8 exactly as before. orin-ops#700."
+      "intent": "Guards the 'failed:agent' ack mapping, the completed override, failed_runs counting, re-arm, and the exemption: 10 consecutive failed agent runs never back off or auto-pause, while pre-task script failures still back off and pause at 8 exactly as before. orin-ops#700."
     },
     {
       "path": "src/mailbox/sqlite/session-db.ts",
@@ -541,14 +541,7 @@
       "path": "src/mailbox/sqlite/tasks.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "getCompletedRecurring re-arms 'failed:agent' occurrences; trailingFailedRuns deliberately leaves them out (neither counted nor streak-breaking) so an agent/provider outage never backs off or auto-pauses a series; trailingAgentFailures counts them for alert verification (orin-ops#700).",
-      "guard": "pnpm exec vitest run src/mailbox/sqlite/run-failure-acks.test.ts"
-    },
-    {
-      "path": "src/mailbox/types.ts",
-      "kind": "source",
-      "status": "carried",
-      "intent": "InboundMailbox.trailingAgentFailures(): the host-observed trailing 'failed:agent' count the run_failure_alert action verifies against (orin-ops#700).",
+      "intent": "getCompletedRecurring re-arms 'failed:agent' occurrences; trailingFailedRuns deliberately leaves them out (neither counted nor streak-breaking) so an agent/provider outage never backs off or auto-pauses a series (orin-ops#700).",
       "guard": "pnpm exec vitest run src/mailbox/sqlite/run-failure-acks.test.ts"
     },
     {
@@ -628,13 +621,13 @@
       "path": "src/modules/approvals/run-failure-alert.test.ts",
       "kind": "test",
       "status": "carried",
-      "intent": "Guards run_failure_alert: host template with the host-observed count, masked single-line capped quote, NANOCLAW_AUTH_FAILURE_HINT on auth alerts, drop without a host-observed failed agent run or outside a task session, one per session per hour, throw when no admin DM is reachable."
+      "intent": "Guards run_failure_alert: fixed template to the owner DM, allowlisted facts + hint on auth alerts, no free text (extra text/detail fields, unlisted error class, non-integer/out-of-range status are omitted), no host-side rate limit, drop outside a task session, throw when no admin DM is reachable."
     },
     {
       "path": "src/modules/approvals/run-failure-alert.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "run_failure_alert delivery action (orin-ops#700): words the alert from a fixed host template (agent group, series, host-observed trailing failed:agent count, auth vs non-auth) plus one short masked quote, verifies a failed agent run is on record, rate-limits to one per session per hour, sends it to the group's approver-chain DM with no model call; throws (not delivered) when no admin DM is reachable.",
+      "intent": "run_failure_alert delivery action (orin-ops#700), runner-attested: renders a fixed host template (agent group, series from the session thread, auth vs non-auth wording, HTTP status only if an integer 100-599, error class only from an allowlist; never free text from the row), appends NANOCLAW_AUTH_FAILURE_HINT to auth alerts, and DMs the group's approver chain with no model call; throws (not delivered) when no admin DM is reachable.",
       "guard": "pnpm exec vitest run src/modules/approvals/run-failure-alert.test.ts"
     },
     {

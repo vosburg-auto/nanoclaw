@@ -657,7 +657,13 @@ export async function processQuery(
           : null;
         if (failed) failTurn(turnIds);
         markCompleted(initialBatchIds.filter((id) => !failedIds.has(id)));
-        await recordRunOutcome({ failed, taskRun: routing.taskRun === true, authDetail });
+        await recordRunOutcome({
+          failed,
+          taskRun: routing.taskRun === true,
+          authDetail,
+          errorStatus: event.errorStatus,
+          errorType: event.errorType,
+        });
         if (resultText || failed) {
           const { hasUnwrapped, taskBlocks } = await dispatchResultText(resultText, routing, {
             midTurnSent,

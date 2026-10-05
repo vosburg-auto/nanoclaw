@@ -5,9 +5,11 @@
  * A failed chat turn already tells its human (the poll loop's error notice).
  * A failed TASK run has nobody on the other end — its text only reaches the
  * run log — so a streak of them is reported as a `run_failure_alert` system
- * row. The host turns it into a fixed-template notice to the agent group's
+ * row of structured facts only (auth flag, HTTP status, provider error
+ * class). The host renders it as a fixed-template notice to the agent group's
  * admin or owner DM. No model call is involved anywhere on that path: the
- * model (or its credential) may be exactly what is broken.
+ * model (or its credential) may be exactly what is broken. The row is
+ * runner-attested; the host trusts it no further than its fixed template.
  *
  * Policy: alert at once on an auth-class failure (a rejected credential never
  * heals by itself), otherwise after 2 consecutive failed task runs; while the
@@ -146,17 +148,19 @@ function readStreak(): FailureStreak | null {
 
 /**
  * Record one turn's outcome against the session's failure streak and write
- * the alert row when the policy says so. The row carries only whether the
- * failure was auth-class and its short quoted detail; the host words the
- * notice and counts the failures itself. Failed chat turns neither count nor
- * reset — their human already got a notice. Never throws: visibility
- * bookkeeping must not fail the turn it describes.
+ * the alert row when the policy says so. The row carries structured facts
+ * only — never error text; the host words the notice. Failed chat turns
+ * neither count nor reset — their human already got a notice. Never throws:
+ * visibility bookkeeping must not fail the turn it describes.
  */
 export async function recordRunOutcome(outcome: {
   failed: boolean;
   taskRun: boolean;
   /** authFailureDetail() of the failure; null when not auth-class (or not failed). */
   authDetail?: string | null;
+  /** The provider's structured failure signal, when it has one. */
+  errorStatus?: number;
+  errorType?: string;
 }): Promise<void> {
   if (outcome.failed && !outcome.taskRun) return;
   try {
@@ -177,7 +181,8 @@ export async function recordRunOutcome(outcome: {
         content: JSON.stringify({
           action: 'run_failure_alert',
           authFailure: authDetail !== null,
-          ...(authDetail && { detail: authDetail }),
+          ...(outcome.errorStatus !== undefined && { errorStatus: outcome.errorStatus }),
+          ...(outcome.errorType !== undefined && { errorType: outcome.errorType }),
         }),
       });
       console.error(`[run-failure] Alert written after ${streak.failures} failed task run(s)`);

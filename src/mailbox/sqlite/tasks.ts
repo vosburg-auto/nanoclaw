@@ -161,27 +161,6 @@ export function getCompletedRecurring(db: Database.Database): RecurringMessage[]
 }
 
 /**
- * Trailing consecutive 'failed:agent' occurrences across the session's task
- * rows (newest backwards until the first other settled run) — the host's own
- * evidence that a run_failure_alert describes a real failure streak.
- */
-export function trailingAgentFailures(db: Database.Database): number {
-  const rows = db
-    .prepare(
-      `SELECT status FROM messages_in
-        WHERE kind = 'task' AND status IN ('completed', 'failed', 'failed:agent')
-        ORDER BY seq DESC`,
-    )
-    .all() as Array<{ status: string }>;
-  let streak = 0;
-  for (const r of rows) {
-    if (r.status !== 'failed:agent') break;
-    streak++;
-  }
-  return streak;
-}
-
-/**
  * Trailing consecutive FAILED occurrences of a series, newest backwards until
  * the first completed run. This IS the script-failure streak — derived from
  * the occurrence history, no stored counter to update or reset. Deliberately
