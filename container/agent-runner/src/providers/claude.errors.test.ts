@@ -106,7 +106,7 @@ it('keeps a Claude task billing failure in its task log and out of chat', async 
   const rows = getUndeliveredMessages();
   expect(rows.filter((row) => row.kind === 'chat')).toHaveLength(0);
   expect(rows.filter((row) => row.kind === 'task_log').map((row) => JSON.parse(row.content).text)).toEqual([
-    BILLING_ERROR,
+    `FAILED: ${BILLING_ERROR}`,
   ]);
   expect(pushes).toHaveLength(0);
 });

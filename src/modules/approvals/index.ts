@@ -13,6 +13,8 @@
  *   - An adapter-ready callback that starts the OneCLI manual-approval handler
  *     once the delivery adapter is set.
  *   - A shutdown callback that stops the OneCLI handler cleanly.
+ *   - The `run_failure_alert` delivery action (./run-failure-alert.js): a
+ *     failing scheduled task's alert, relayed to the same admin DM.
  *
  * Exposes `sweepAwaitingReasonRejects` for the host sweep to finalize ghosted
  * reject-with-reason holds (re-exported here, which also loads reason-capture
@@ -27,6 +29,7 @@ import { onHostShutdown } from '../../host-lifecycle.js';
 import { registerResponseHandler } from '../../response-registry.js';
 import { handleApprovalsResponse } from './response-handler.js';
 import { startOneCLIApprovalHandler, stopOneCLIApprovalHandler } from './onecli-approvals.js';
+import './run-failure-alert.js';
 
 // Public API re-exports so consumers import from the module root.
 export { requestApproval, registerApprovalHandler, notifyAgent } from './primitive.js';

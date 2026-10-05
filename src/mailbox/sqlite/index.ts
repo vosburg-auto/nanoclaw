@@ -74,13 +74,23 @@ function sqliteTimestamp(value: string): string {
 function applyProcessingAcks(db: Database.Database, acks: ProcessingAck[]): void {
   if (acks.length === 0) return;
   const complete = db.prepare(
-    "UPDATE messages_in SET status = 'completed' WHERE id = ? AND status NOT IN ('completed', 'failed')",
+    "UPDATE messages_in SET status = 'completed' WHERE id = ? AND status NOT IN ('completed', 'failed', 'failed:auth')",
   );
   const fail = db.prepare(
-    "UPDATE messages_in SET status = 'failed' WHERE id = ? AND status NOT IN ('completed', 'failed')",
+    "UPDATE messages_in SET status = 'failed' WHERE id = ? AND status NOT IN ('completed', 'failed', 'failed:auth')",
+  );
+  // A runner 'failed' / 'failed:auth' ack (the agent turn ended in an error)
+  // may replace the same runner's earlier 'completed' ack — a follow-up batch
+  // is acked when it is pushed and its turn can fail later — so it also
+  // overrides 'completed'. The status is copied as is.
+  const failRun = db.prepare(
+    "UPDATE messages_in SET status = ? WHERE id = ? AND status NOT IN ('failed', 'failed:auth')",
   );
   db.transaction(() => {
-    for (const ack of acks) (ack.status === 'script-skip:error' ? fail : complete).run(ack.messageId);
+    for (const ack of acks) {
+      if (ack.status === 'failed' || ack.status === 'failed:auth') failRun.run(ack.status, ack.messageId);
+      else (ack.status === 'script-skip:error' ? fail : complete).run(ack.messageId);
+    }
   })();
 }
 
@@ -160,7 +170,7 @@ function getTaskStats(db: Database.Database, seriesId: string): TaskStats {
       `SELECT
          COUNT(*) FILTER (WHERE status = 'completed') AS runs,
          MAX(process_after) FILTER (WHERE status = 'completed') AS last_run,
-         COUNT(*) FILTER (WHERE status = 'failed') AS failed_runs
+         COUNT(*) FILTER (WHERE status IN ('failed', 'failed:auth')) AS failed_runs
        FROM messages_in
       WHERE kind = 'task' AND (id = ? OR series_id = ?)`,
     )
@@ -311,7 +321,7 @@ export function wrapSqliteOutbound(
       (
         readable()
           .prepare(
-            "SELECT message_id, status, status_changed FROM processing_ack WHERE status IN ('completed', 'failed', 'script-skip:error')",
+            "SELECT message_id, status, status_changed FROM processing_ack WHERE status IN ('completed', 'failed', 'failed:auth', 'script-skip:error')",
           )
           .all() as Array<{ message_id: string; status: ProcessingAck['status']; status_changed: string }>
       ).map((row) =>

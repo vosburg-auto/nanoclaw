@@ -140,7 +140,7 @@ export function getMessageForRetry(
 export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Database): void {
   const completed = outDb
     .prepare(
-      "SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed', 'script-skip:error')",
+      "SELECT message_id, status FROM processing_ack WHERE status IN ('completed', 'failed', 'failed:auth', 'script-skip:error')",
     )
     .all() as Array<{ message_id: string; status: string }>;
 
@@ -150,14 +150,20 @@ export function syncProcessingAcks(inDb: Database.Database, outDb: Database.Data
   // semantically true, and it lets recurrence derive the trailing failed
   // streak from the occurrence rows themselves (no stored counter).
   const completeStmt = inDb.prepare(
-    "UPDATE messages_in SET status = 'completed' WHERE id = ? AND status NOT IN ('completed', 'failed')",
+    "UPDATE messages_in SET status = 'completed' WHERE id = ? AND status NOT IN ('completed', 'failed', 'failed:auth')",
   );
   const failStmt = inDb.prepare(
-    "UPDATE messages_in SET status = 'failed' WHERE id = ? AND status NOT IN ('completed', 'failed')",
+    "UPDATE messages_in SET status = 'failed' WHERE id = ? AND status NOT IN ('completed', 'failed', 'failed:auth')",
+  );
+  // A runner 'failed' / 'failed:auth' ack (errored agent turn) may follow its
+  // own 'completed' ack for a follow-up batch, so it also overrides 'completed'.
+  const failRunStmt = inDb.prepare(
+    "UPDATE messages_in SET status = ? WHERE id = ? AND status NOT IN ('failed', 'failed:auth')",
   );
   inDb.transaction(() => {
     for (const { message_id, status } of completed) {
-      (status === 'script-skip:error' ? failStmt : completeStmt).run(message_id);
+      if (status === 'failed' || status === 'failed:auth') failRunStmt.run(status, message_id);
+      else (status === 'script-skip:error' ? failStmt : completeStmt).run(message_id);
     }
   })();
 }

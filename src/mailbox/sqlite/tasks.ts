@@ -150,9 +150,13 @@ export interface RecurringMessage {
 // Failed occurrences (script-skip:error runs) re-arm too — a broken monitor
 // must keep its series alive so backoff can throttle it and the cap can pause
 // it; dropping the row would silently kill the series on first script error.
+// 'failed:auth' runs re-arm on plain cron, so the series resumes by itself
+// once the credential is replaced.
 export function getCompletedRecurring(db: Database.Database): RecurringMessage[] {
   return db
-    .prepare("SELECT * FROM messages_in WHERE status IN ('completed', 'failed') AND recurrence IS NOT NULL")
+    .prepare(
+      "SELECT * FROM messages_in WHERE status IN ('completed', 'failed', 'failed:auth') AND recurrence IS NOT NULL",
+    )
     .all() as RecurringMessage[];
 }
 
@@ -162,7 +166,11 @@ export function getCompletedRecurring(db: Database.Database): RecurringMessage[]
  * the occurrence history, no stored counter to update or reset. Deliberately
  * counts ANY failed occurrence (script-skip:error acks AND stuck-message
  * failures from host-sweep's MAX_TRIES path): a series failing for either
- * reason should throttle, not spin.
+ * reason should throttle, not spin. 'failed:auth' occurrences (the model
+ * provider rejected the credential) are deliberately invisible here — neither
+ * counted nor streak-breaking: the series cannot fix that itself, so backing
+ * it off or auto-pausing it would only keep it dead after the credential is
+ * replaced. They still count in failed_runs.
  */
 export function trailingFailedRuns(db: Database.Database, seriesKey: string): number {
   const rows = db
