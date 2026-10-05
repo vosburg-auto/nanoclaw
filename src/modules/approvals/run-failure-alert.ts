@@ -10,9 +10,11 @@
  * reach (pickApprover → pickApprovalDelivery). No model call.
  *
  * The alert is runner-attested: the container can write any row to its own
- * outbound DB, so nothing here proves a run failed. That is accepted — an
- * agent can already message its own chat; this lets it send its approver a
- * fixed-template notice and nothing more. The row contributes only
+ * outbound DB, so nothing here proves a run failed, and the host does not
+ * bound how many rows a session writes: a misbehaving agent can repeat the
+ * fixed-template notice. That is accepted — an agent can already message its
+ * own chat, and the notice carries no agent text. The runner's per-streak
+ * 24h dedup bounds a well-behaved runner. The row contributes only
  * structured facts: `authFailure` picks the wording, `errorStatus` is shown
  * only as an integer HTTP status, `errorType` only from the fixed allowlist
  * below. No free text from the row ever reaches the DM.
@@ -109,7 +111,7 @@ registerDeliveryAction(
   'run_failure_alert',
   deliverRunFailureAlert,
   unguarded(
-    'runner-attested notice: a task session may send its approver chain one fixed-template DM; the row supplies ' +
-      'only structured facts (auth flag, allowlisted error class, integer HTTP status), never free text',
+    'runner-attested notice: a task session can send its approver chain fixed-template DMs (bounded only by the ' +
+      "runner's per-streak dedup, not by the host); the row supplies only structured facts, never free text",
   ),
 );
