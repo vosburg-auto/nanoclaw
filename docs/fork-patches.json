@@ -59,6 +59,13 @@
       "guard": "pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit"
     },
     {
+      "path": "container/agent-runner/src/db/messages-in.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "markFailed(ids) acks an errored agent turn's whole batch 'failed:agent' (orin-ops#700).",
+      "guard": "cd container/agent-runner && bun test src/run-failure.test.ts"
+    },
+    {
       "path": "container/agent-runner/src/fork-provider-options.test.ts",
       "kind": "test",
       "status": "carried",
@@ -86,17 +93,38 @@
       "guard": "cd container/agent-runner && bun test src/fork-provider-options.test.ts"
     },
     {
+      "path": "container/agent-runner/src/mailbox/model.generated.ts",
+      "kind": "generated",
+      "status": "carried",
+      "intent": "Byte copy of src/mailbox/model.ts (`pnpm run mailbox-model:generate`); carries the orin-ops#700 'failed:agent' status.",
+      "guard_waiver": "Generated: `pnpm run mailbox-model:check` (cmp against src/mailbox/model.ts) keeps it identical; the behaviour is guarded on model.ts."
+    },
+    {
+      "path": "container/agent-runner/src/mailbox/sqlite/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "markMessages writes a 'failed:agent' ack (orin-ops#700).",
+      "guard": "cd container/agent-runner && bun test src/run-failure.test.ts"
+    },
+    {
+      "path": "container/agent-runner/src/mailbox/sqlite/operations.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "sqliteMarkFailed takes the failed status ('failed' | 'failed:agent') (orin-ops#700).",
+      "guard": "cd container/agent-runner && bun test src/run-failure.test.ts"
+    },
+    {
       "path": "container/agent-runner/src/poll-loop.test.ts",
       "kind": "test",
       "status": "carried",
-      "intent": "Guards the a2a self-send loop fix: an error result on a self-addressed batch writes no outbound; a peer-agent origin still gets the error."
+      "intent": "Guards the a2a self-send loop fix: an error result on a self-addressed batch writes no outbound; a peer-agent origin still gets the error. Failed task run-log expectation carries the orin-ops#700 `FAILED: ` prefix."
     },
     {
       "path": "container/agent-runner/src/poll-loop.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "isSelfAddressed: never echo an error notice (outer catch or deliverErrorResult) back to a self-addressed batch. On 2026-09-23 a restart on_wake plus an unsupported-model 400 turned every error echo into an a2a self-send that re-woke the same failing session ~1/s.",
-      "guard": "cd container/agent-runner && bun test src/poll-loop.test.ts"
+      "intent": "isSelfAddressed: never echo an error notice (outer catch or deliverErrorResult) back to a self-addressed batch. On 2026-09-23 a restart on_wake plus an unsupported-model 400 turned every error echo into an a2a self-send that re-woke the same failing session ~1/s. Also orin-ops#700: an errored result (or an abandoned turn in a crashed query) acks that turn's batch 'failed' - never overwritten by the completion acks - prefixes the task run log `FAILED: `, words an auth-class failure as a rejected credential in the chat notice, and feeds the task failure streak (run-failure.ts).",
+      "guard": "cd container/agent-runner && bun test src/poll-loop.test.ts src/run-failure.test.ts"
     },
     {
       "path": "container/agent-runner/src/providers/claude-auto-compact.test.ts",
@@ -105,18 +133,37 @@
       "intent": "Guards resolveAutoCompactWindow precedence: per-group > env > built-in default."
     },
     {
+      "path": "container/agent-runner/src/providers/claude.errors.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Expectation updated for orin-ops#700 (`FAILED: ` run-log prefix); guards the forwarded structured auth signal (api_error_status, assistant error class)."
+    },
+    {
       "path": "container/agent-runner/src/providers/claude.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). resolveAutoCompactWindow and its precedence contract.",
-      "guard": "cd container/agent-runner && bun test src/providers/claude-auto-compact.test.ts"
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). resolveAutoCompactWindow and its precedence contract. Also orin-ops#700: forwards the SDK result's api_error_status and the assistant message's error class (e.g. 'authentication_failed') onto the result event.",
+      "guard": "cd container/agent-runner && bun test src/providers/claude-auto-compact.test.ts src/providers/claude.errors.test.ts"
     },
     {
       "path": "container/agent-runner/src/providers/types.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The autoCompactWindow field on ProviderOptions.",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The autoCompactWindow field on ProviderOptions. Also orin-ops#700: the result ProviderEvent carries the provider's structured failure signal (errorStatus, errorType), preferred over text for auth classification.",
       "guard": "pnpm exec tsc -p container/agent-runner/tsconfig.json --noEmit"
+    },
+    {
+      "path": "container/agent-runner/src/run-failure.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards orin-ops#700 through the real processQuery/runPollLoop: 401 -> ack failed:agent + one facts-only auth alert row; structured signal (status 401 / auth error class) first, structured non-auth wins over text, regex fallback with negatives ('GitHub token was revoked', '400 invalid max tokens'); no second alert within 24h, a re-alert after 24h; success resets; 2 non-auth errors -> one alert; normal run unchanged; follow-up / queued / crash-abandoned turn acks."
+    },
+    {
+      "path": "container/agent-runner/src/run-failure.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "orin-ops#700 (20h silent credential outage): auth classification (SDK structured signal first, anchored regex fallback), credential-rejected chat notice text, and the per-session failure streak (session_state `run_failure_streak` {failures, lastAlertAt}) that writes a `run_failure_alert` row of structured facts only (authFailure, errorStatus, errorType) - immediately on auth, else at 2 consecutive failed task runs; at most once per 24h while the streak lasts.",
+      "guard": "cd container/agent-runner && bun test src/run-failure.test.ts"
     },
     {
       "path": "container/skills/context-awareness/SKILL.md",
@@ -464,6 +511,40 @@
       "guard": "pnpm exec vitest run src/startup-order.test.ts"
     },
     {
+      "path": "src/mailbox/model.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Adds the 'failed:agent' processing-ack and messages_in status (orin-ops#700): an agent run that itself errored - a failed run (failed_runs, re-armed), never part of the pre-task-script backoff/auto-pause streak.",
+      "guard": "pnpm exec vitest run src/mailbox/sqlite/run-failure-acks.test.ts"
+    },
+    {
+      "path": "src/mailbox/sqlite/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "applyProcessingAcks maps a runner 'failed:agent' ack to messages_in 'failed:agent' (errored agent runs were recorded completed and failed_runs stayed 0), lets it override a prior 'completed' (warm follow-ups are acked at push time) and never lets 'completed' overwrite it; failed_runs counts it. orin-ops#700.",
+      "guard": "pnpm exec vitest run src/mailbox/sqlite/run-failure-acks.test.ts"
+    },
+    {
+      "path": "src/mailbox/sqlite/run-failure-acks.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards the 'failed:agent' ack mapping, the completed override, failed_runs counting, re-arm, and the exemption: 10 consecutive failed agent runs never back off or auto-pause, while pre-task script failures still back off and pause at 8 exactly as before. orin-ops#700."
+    },
+    {
+      "path": "src/mailbox/sqlite/session-db.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "syncProcessingAcks (the legacy copy of applyProcessingAcks) maps 'failed:agent' acks the same way. orin-ops#700.",
+      "guard": "pnpm exec vitest run src/mailbox/sqlite/run-failure-acks.test.ts"
+    },
+    {
+      "path": "src/mailbox/sqlite/tasks.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "getCompletedRecurring re-arms 'failed:agent' occurrences; trailingFailedRuns deliberately leaves them out (neither counted nor streak-breaking) so an agent/provider outage never backs off or auto-pauses a series (orin-ops#700).",
+      "guard": "pnpm exec vitest run src/mailbox/sqlite/run-failure-acks.test.ts"
+    },
+    {
       "path": "src/modules/agent-to-agent/agent-route.test.ts",
       "kind": "test",
       "status": "carried",
@@ -488,6 +569,13 @@
       "status": "carried",
       "intent": "128-bit CSPRNG approval ids, in one fork-owned module instead of two hunks.",
       "guard": "pnpm exec vitest run src/modules/approvals/approval-id.test.ts"
+    },
+    {
+      "path": "src/modules/approvals/index.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "Imports run-failure-alert.ts so the run_failure_alert delivery action registers. orin-ops#700.",
+      "guard": "pnpm exec vitest run src/modules/approvals/run-failure-alert.test.ts"
     },
     {
       "path": "src/modules/approvals/onecli-approvals.test.ts",
@@ -530,6 +618,19 @@
       "superseded_reason": "Upstream advanced past the fork here (reason-capture, isAuthorizedApprovalClick). Verified by grep that the fork carried no edits of its own."
     },
     {
+      "path": "src/modules/approvals/run-failure-alert.test.ts",
+      "kind": "test",
+      "status": "carried",
+      "intent": "Guards run_failure_alert: fixed template to the owner DM, allowlisted facts + hint on auth alerts, no free text (extra text/detail fields, unlisted error class, non-integer/out-of-range status are omitted), no host-side rate limit, drop outside a task session, throw when no admin DM is reachable."
+    },
+    {
+      "path": "src/modules/approvals/run-failure-alert.ts",
+      "kind": "source",
+      "status": "carried",
+      "intent": "run_failure_alert delivery action (orin-ops#700), runner-attested: renders a fixed host template (agent group, series from the session thread, auth vs non-auth wording, HTTP status only if an integer 100-599, error class only from an allowlist; never free text from the row), appends NANOCLAW_AUTH_FAILURE_HINT to auth alerts, and DMs the group's approver chain with no model call; throws (not delivered) when no admin DM is reachable.",
+      "guard": "pnpm exec vitest run src/modules/approvals/run-failure-alert.test.ts"
+    },
+    {
       "path": "src/startup-order.test.ts",
       "kind": "test",
       "status": "carried",
@@ -552,7 +653,7 @@
       "path": "src/types.ts",
       "kind": "source",
       "status": "carried",
-      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The auto_compact_window field on ContainerConfigRow.",
+      "intent": "Per-group Claude Code auto-compact window (container_configs.auto_compact_window). The auto_compact_window field on ContainerConfigRow. Also MessageInStatus gains 'failed:agent' (orin-ops#700).",
       "guard": "pnpm exec tsc --noEmit"
     },
     {

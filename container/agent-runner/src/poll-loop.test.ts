@@ -584,7 +584,7 @@ describe('task-run turn wiring (real processQuery)', () => {
       undefined,
     );
 
-    expect(taskLogRows()).toEqual([{ text: '[undelivered → main] Completed before failure. Backend failed.' }]);
+    expect(taskLogRows()).toEqual([{ text: 'FAILED: [undelivered → main] Completed before failure. Backend failed.' }]);
     expect(getUndeliveredMessages().filter((row) => row.kind === 'chat')).toHaveLength(0);
     expect(exchanges).toEqual([{ prompt: 'prompt', result: text, continuation: 'sess-1', status: 'error' }]);
     expect(pushes).toHaveLength(0);

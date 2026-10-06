@@ -93,8 +93,9 @@ export function markScriptSkipped(skips: Array<{ id: string; reason: string }>):
   getAgentMailbox().operations.markScriptSkipped(skips);
 }
 
-export function markFailed(id: string): void {
-  getAgentMailbox().operations.markMessages([id], 'failed');
+/** The agent run itself errored: a failed run the host keeps out of its script-failure backoff streak. */
+export function markFailed(ids: string[]): void {
+  if (ids.length > 0) getAgentMailbox().operations.markMessages(ids, 'failed:agent');
 }
 
 export function getMessageIn(id: string): MessageInRow | undefined {

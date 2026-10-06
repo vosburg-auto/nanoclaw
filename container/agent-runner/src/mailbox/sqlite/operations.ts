@@ -74,8 +74,8 @@ export function sqliteMarkCompleted(ids: string[]): void {
   mark(ids, 'completed');
 }
 
-export function sqliteMarkFailed(id: string): void {
-  mark([id], 'failed');
+export function sqliteMarkFailed(id: string, status: 'failed' | 'failed:agent' = 'failed'): void {
+  mark([id], status);
 }
 
 export function sqliteMarkScriptSkipped(skips: Array<{ id: string; reason: string }>): void {

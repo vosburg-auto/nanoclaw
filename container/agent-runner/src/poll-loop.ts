@@ -3,6 +3,7 @@ import {
   getPendingMessages,
   markProcessing,
   markCompleted,
+  markFailed,
   markScriptSkipped,
   type MessageInRow,
 } from './db/messages-in.js';
@@ -30,6 +31,13 @@ import {
 } from './formatter.js';
 import { stripHarnessTagArtifacts } from './harness-tag-strip.js';
 import { isUploadTraceCommand, uploadTrace } from './upload-trace.js';
+import {
+  GENERIC_FAILURE_NOTICE,
+  authFailureDetail,
+  authFailureNotice,
+  failureNotice,
+  recordRunOutcome,
+} from './run-failure.js';
 import type { AgentProvider, AgentQuery, ProviderEvent, ProviderExchange } from './providers/types.js';
 import type { ProviderRuntimeContract } from './provider-contracts/registry.js';
 
@@ -262,6 +270,9 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Process the query while concurrently polling for new messages
     const skippedSet = new Set(skipped.map((s) => s.id));
     const processingIds = ids.filter((id) => !commandIds.includes(id) && !skippedSet.has(id));
+    // Ids a failed turn acked 'failed' — the completion acks below must not
+    // overwrite them.
+    const failedIds = new Set<string>();
     // Publish the batch's route so MCP tools (send_message, send_file) thread
     // replies into the conversation being answered and stamp in_reply_to for
     // a2a return-path routing. Re-published at every turn boundary inside
@@ -288,6 +299,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
         continuation,
         midTurnCompleteDelivery,
         config.signal,
+        failedIds,
       );
       if (result.continuation && result.continuation !== continuation) {
         continuation = result.continuation;
@@ -309,18 +321,19 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       // processQuery owns failure notices: it knows which active and queued
       // turns the failure abandoned. The opening batch may already be done.
 
-      // The batch is still acked completed below (no redelivery). Without
-      // this line the only log trace of the errored turn is "Query error"
-      // followed by a "Completed" line that reads like success.
-      log(`Errored batch will be acked completed — ${processingIds.length} message(s), no redelivery`);
+      // No redelivery either way: processQuery acked the abandoned turns
+      // 'failed'; anything it did not settle is acked completed below.
+      // Without this line the only log trace of the errored turn is "Query
+      // error" followed by a "Completed" line that reads like success.
+      log(`Errored batch will not be redelivered — ${processingIds.length} message(s)`);
     } finally {
       clearCurrentReplyRoute();
       config.signal?.removeEventListener('abort', abortActiveQuery);
     }
 
     // Ensure completed even if processQuery ended without a result event
-    // (e.g. stream closed unexpectedly).
-    markCompleted(processingIds);
+    // (e.g. stream closed unexpectedly) — but never over a 'failed' ack.
+    markCompleted(processingIds.filter((id) => !failedIds.has(id)));
     log(`Completed ${ids.length} message(s)`);
   }
 }
@@ -386,6 +399,8 @@ export async function processQuery(
    */
   midTurnCompleteDelivery = false,
   signal?: AbortSignal,
+  /** Collects every id this query acks 'failed', so the caller never re-acks it completed. */
+  failedIds: Set<string> = new Set(),
 ): Promise<QueryResult> {
   // adoptTurn mutates routing in place; keep the caller's batch route intact.
   routing = { ...routing };
@@ -437,24 +452,33 @@ export async function processQuery(
   // push order (including retries) and advance at every result, mirroring
   // archivePrompts. An empty initial prompt (a pre-warmed query) starts idle.
   let answering = initialPrompt !== '';
+  // The inbound ids the answering turn settles — a failed result acks them
+  // 'failed'. Travels with the turn like its route.
+  let turnIds: string[] = answering ? initialBatchIds : [];
   type QueuedTurn = {
     routing: RoutingContext;
     unwrappedNudged: boolean;
     taskBlockNudged: boolean;
+    ids: string[];
   };
   const queuedTurns: QueuedTurn[] = [];
   const adoptTurn = (next: QueuedTurn): void => {
     Object.assign(routing, next.routing);
     unwrappedNudged = next.unwrappedNudged;
     taskBlockNudged = next.taskBlockNudged;
+    turnIds = next.ids;
     publishReplyRoute(routing);
     answering = true;
+  };
+  const failTurn = (ids: string[]): void => {
+    for (const id of ids) failedIds.add(id);
+    markFailed(ids);
   };
   // A retry is another provider input, behind any follow-ups already pushed.
   // Preserve its original route, prompt and retry guards until it is answered.
   const pushRetry = (prompt: string): void => {
     query.push(prompt);
-    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged });
+    queuedTurns.push({ routing: { ...routing }, unwrappedNudged, taskBlockNudged, ids: turnIds });
     archivePrompts.push(archivePrompts[0] ?? initialPrompt);
   };
 
@@ -550,6 +574,7 @@ export async function processQuery(
           routing: { ...extractRouting(keep), selfAgentGroupId: routing.selfAgentGroupId },
           unwrappedNudged: false,
           taskBlockNudged: false,
+          ids: keptIds,
         };
         if (answering) queuedTurns.push(next);
         else adoptTurn(next);
@@ -619,10 +644,26 @@ export async function processQuery(
         // stale 'processing' claims while the query stays open for
         // follow-up pushes. The agent may have responded via MCP
         // (send_message) mid-turn, or the message may not need a response
-        // at all — either way the turn is finished.
-        markCompleted(initialBatchIds);
+        // at all — either way the turn is finished. A failed result acks
+        // this turn's batch 'failed' instead, so it counts as a failed run.
         const resultText = event.text ?? '';
         const failed = event.isError === true;
+        const authDetail = failed
+          ? authFailureDetail({
+              status: event.errorStatus,
+              errorType: event.errorType,
+              texts: [event.error, resultText],
+            })
+          : null;
+        if (failed) failTurn(turnIds);
+        markCompleted(initialBatchIds.filter((id) => !failedIds.has(id)));
+        await recordRunOutcome({
+          failed,
+          taskRun: routing.taskRun === true,
+          authDetail,
+          errorStatus: event.errorStatus,
+          errorType: event.errorType,
+        });
         if (resultText || failed) {
           const { hasUnwrapped, taskBlocks } = await dispatchResultText(resultText, routing, {
             midTurnSent,
@@ -648,12 +689,15 @@ export async function processQuery(
           // A corrective retry handles delivery only; its result is not a
           // second run summary.
           const archivedResult = [resultText, failed ? event.error : undefined].filter(Boolean).join('\n');
-          if (routing.taskRun && !taskBlockNudged) await autoAppendTaskLog(archivedResult);
+          if (routing.taskRun && !taskBlockNudged) {
+            await autoAppendTaskLog(failed ? `FAILED: ${archivedResult}` : archivedResult);
+          }
           if (failed && !routing.taskRun) {
             // A failed turn needs a visible notice even after a partial reply.
-            // Only the provider's dedicated error field is channel content;
+            // Only the provider's dedicated error field is channel content —
+            // plus, for a rejected credential, the one short line saying so;
             // unwrapped model output and raw diagnostics remain private.
-            await deliverErrorResult(routing, event.error ?? 'The agent run failed. Check the logs for details.');
+            await deliverErrorResult(routing, failureNotice(authDetail, event.error));
           }
           // An unwrapped final text only warrants the wrap-nudge when NOTHING
           // was delivered this turn — hasUnwrapped already folds in the
@@ -722,7 +766,21 @@ export async function processQuery(
       // output from unfinished turns and report that the run did not finish.
       // Retrying the same route or several queued turns in one thread needs
       // only one notice. Task and agent wakes have no human chat endpoint.
-      const failedRoutes = [...(answering ? [routing] : []), ...queuedTurns.map((turn) => turn.routing)];
+      const abandoned = [...(answering ? [{ routing, ids: turnIds }] : []), ...queuedTurns];
+      const failedRoutes = abandoned.map((turn) => turn.routing);
+      // The abandoned turns did not run: ack them 'failed' (they were acked
+      // completed or are about to be), and count an abandoned task run
+      // toward the failure streak — its alert is the only human signal.
+      const authDetail = authFailureDetail({ texts: [errMsg] });
+      try {
+        failTurn(abandoned.flatMap((turn) => turn.ids));
+      } catch (ackError) {
+        log(`Failed to ack abandoned turns failed: ${ackError instanceof Error ? ackError.message : String(ackError)}`);
+      }
+      if (failedRoutes.some((target) => target.taskRun)) {
+        await recordRunOutcome({ failed: true, taskRun: true, authDetail });
+      }
+      const notice = authDetail ? authFailureNotice(authDetail) : GENERIC_FAILURE_NOTICE;
       const noticed: RoutingContext[] = [];
       for (const target of failedRoutes) {
         if (target.taskRun || !target.platformId || !target.channelType || target.channelType === 'agent') continue;
@@ -737,7 +795,7 @@ export async function processQuery(
           continue;
         noticed.push(target);
         try {
-          await deliverErrorResult(target, 'The agent run failed. Check the logs for details.');
+          await deliverErrorResult(target, notice);
         } catch (noticeError) {
           log(
             `Failed to deliver query error notice: ${noticeError instanceof Error ? noticeError.message : String(noticeError)}`,
@@ -746,7 +804,8 @@ export async function processQuery(
       }
     }
     // Continuation recovery receives the original error; diagnostics remain
-    // in the exchange archive and runner log, never in the channel notice.
+    // in the exchange archive and runner log, never in the channel notice
+    // (beyond the one short line naming a rejected credential).
     throw err;
   } finally {
     done = true;

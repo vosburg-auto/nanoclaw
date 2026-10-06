@@ -122,7 +122,7 @@ export class SqliteAgentMailbox implements AgentMailbox {
   markMessages(ids: string[], status: ProcessingStatus): void {
     if (status === 'processing') sqliteMarkProcessing(ids);
     else if (status === 'completed') sqliteMarkCompleted(ids);
-    else if (status === 'failed') ids.forEach(sqliteMarkFailed);
+    else if (status === 'failed' || status === 'failed:agent') ids.forEach((id) => sqliteMarkFailed(id, status));
     else sqliteMarkScriptSkipped(ids.map((id) => ({ id, reason: 'error' })));
   }
 
